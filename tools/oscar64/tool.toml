@@ -1,0 +1,29 @@
+[tool]
+name         = "oscar64"
+description  = "C/C++ compiler for C64/C128 (Oscar design)"
+homepage     = "https://github.com/drmortalwombat/oscar64"
+license      = "GPL-3.0"
+license_files = ["LICENSE"]
+platform_independent = false
+runtime_requirements = []
+
+[upstream]
+type        = "github"
+repo        = "drmortalwombat/oscar64"
+tag_regex   = '^v?(?P<version>\d+\.\d+(?:\.\d+)?)$'
+min_version = "1.32.273"
+skip_versions = []
+max_per_run = 2
+
+[source]
+url = "https://github.com/drmortalwombat/oscar64/archive/refs/tags/v{version}.tar.gz"
+strip_components = 1
+
+[build]
+mode = "source"
+alpine_packages = ["build-base"]
+macos_packages  = []
+timeout_minutes = 30
+
+[test]
+expected_bins = ["oscar64"]

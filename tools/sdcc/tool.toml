@@ -1,0 +1,30 @@
+[tool]
+name         = "sdcc"
+description  = "Small Device C Compiler (6502/Z80 ports)"
+homepage     = "https://sdcc.sourceforge.net"
+license      = "GPL-2.0"
+license_files = ["COPYRIGHT.txt"]
+platform_independent = false
+runtime_requirements = []
+
+[upstream]
+type        = "sourceforge"
+repo        = "sdcc"
+tag_regex   = '^(?P<version>\d+\.\d+\.\d+)$'
+file_regex  = '^sdcc-src-(?P<version>\d+\.\d+\.\d+)\.tar\.gz$'
+min_version = "4.4.0"
+skip_versions = []
+max_per_run = 2
+
+[source]
+url = "https://sourceforge.net/projects/sdcc/files/sdcc/{version}/sdcc-src-{version}.tar.gz/download"
+strip_components = 1
+
+[build]
+mode = "source"
+alpine_packages = ["build-base", "boost-dev", "boost-static", "bison", "flex", "zlib-dev", "zlib-static", "texinfo"]
+macos_packages  = ["boost", "bison", "flex"]
+timeout_minutes = 90
+
+[test]
+expected_bins = ["sdcc", "sdcpp", "sdas8051", "sdasz80", "sdldz80"]

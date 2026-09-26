@@ -1,0 +1,30 @@
+[tool]
+name         = "tass64"
+description  = "64tass cross-assembler for 6502/C64"
+homepage     = "https://sourceforge.net/projects/tass64/"
+license      = "GPL-2.0"
+license_files = ["COPYING"]
+platform_independent = false
+runtime_requirements = []
+
+[upstream]
+type        = "sourceforge"
+repo        = "tass64"
+tag_regex   = '^(?P<version>\d+\.\d+\.\d+)$'
+file_regex  = '^64tass-(?P<version>\d+\.\d+\.\d+)-src\.zip$'
+min_version = "1.59.3120"
+skip_versions = []
+max_per_run = 2
+
+[source]
+url = "https://sourceforge.net/projects/tass64/files/source/64tass-{version}-src.zip/download"
+strip_components = 0
+
+[build]
+mode = "source"
+alpine_packages = ["build-base"]
+macos_packages  = []
+timeout_minutes = 30
+
+[test]
+expected_bins = ["64tass"]
