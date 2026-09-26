@@ -21,7 +21,7 @@ strip_components = 1
 
 [build]
 mode = "source"
-alpine_packages = ["build-base"]
+alpine_packages = ["build-base", "linux-headers"]  # MachineTypes.h includes linux/limits.h
 macos_packages  = []
 timeout_minutes = 30
 

@@ -1,0 +1,11 @@
+--- a/make/makefile
++++ b/make/makefile
+@@ -63,7 +63,7 @@
+ compiler: --prep-build-dir $(objects)
+ 	@$(MKDIR_PARENT) $(srcdir)
+ 	@echo "Linking compiler..."
+-	$(CXX) $(CPPFLAGS) $(objects) $(linklibs) -o $(project_dir)/bin/oscar64
++	$(CXX) $(CPPFLAGS) $(LDFLAGS) $(objects) $(linklibs) -o $(project_dir)/bin/oscar64
+ 
+ 
+ .PHONY : clean
