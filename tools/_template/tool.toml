@@ -1,0 +1,29 @@
+[tool]
+name         = "_template"           # rewritten by scripts/new-tool.sh
+description  = "TODO: one-line description"
+homepage     = "TODO: https://..."
+license      = "TODO: SPDX id"
+license_files = ["TODO: path in source tree"]
+platform_independent = false
+runtime_requirements = []
+
+[upstream]
+type        = "github"                # github | gitlab | sourceforge
+repo        = "TODO/TODO"
+tag_regex   = '^(?P<version>\d+\.\d+(?:\.\d+)?)$'
+min_version = "0.0.0"
+skip_versions = []
+max_per_run = 2
+
+[source]
+url = "https://github.com/TODO/TODO/archive/refs/tags/{version}.tar.gz"
+strip_components = 1
+
+[build]
+mode = "source"                       # source | repackage
+alpine_packages = ["build-base"]
+macos_packages  = []
+timeout_minutes = 30
+
+[test]
+expected_bins = ["TODO"]
