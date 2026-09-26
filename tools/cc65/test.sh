@@ -18,16 +18,23 @@ done
 
 "$BIN/cl65" --version >/dev/null || fail "cl65 --version failed"
 
-# End-to-end compile from an arbitrary cwd (spec §6.3).
+# Work on copies in a temp dir: cl65 writes its intermediate .s/.o next to the
+# source file (named hello.s for hello.c — which is why the asm fixture is
+# asm_hello.s: cl65 would overwrite and unlink it otherwise; strace-verified).
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
-"$BIN/cl65" -t c64 "$FIXTURES/hello.c" -o hello.prg || fail "cl65 hello.c failed"
+mkdir asm && cp "$FIXTURES/hello.c" . && cp "$FIXTURES/asm_hello.s" "$FIXTURES/flat.cfg" asm/
+
+# End-to-end C compile for C64 (spec §6.3).
+cl65_bin="$BIN/cl65"
+"$cl65_bin" -t c64 hello.c -o hello.prg || fail "cl65 hello.c failed"
 [ -s hello.prg ] || fail "hello.prg missing or empty"
 
-# ca65/ld65 round-trip (spec §10).
-"$BIN/ca65" "$FIXTURES/hello.s" -o hello.o || fail "ca65 hello.s failed"
-"$BIN/ld65" -o hello2.prg hello.o || fail "ld65 round-trip failed"
+# ca65/ld65 round-trip (spec §10) with a minimal linker config: ld65 requires
+# -C, and c64.cfg needs crt0 symbols a bare object doesn't define.
+"$BIN/ca65" asm/asm_hello.s -o asm/hello.o || fail "ca65 asm_hello.s failed"
+"$BIN/ld65" -C asm/flat.cfg -o hello2.prg asm/hello.o || fail "ld65 round-trip failed"
 [ -s hello2.prg ] || fail "hello2.prg missing or empty"
 
 echo "test.sh(cc65): OK"

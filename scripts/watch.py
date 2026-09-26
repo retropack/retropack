@@ -18,7 +18,10 @@ def parse_tags(tags: list[str], pattern: str) -> list[str]:
     """
     rx = re.compile(pattern)
     if "version" not in rx.groupindex:
-        raise ValueError(f"pattern must contain a 'version' named group: {pattern!r}")
+        # Review Focus: a bad manifest must not abort the daily run for all
+        # tools — skip this tool's versions instead (schema test catches it at PR time).
+        print(f"watch: skipping pattern without 'version' group: {pattern!r}", file=sys.stderr)
+        return []
     out = []
     for tag in tags:
         m = rx.match(tag)
@@ -56,10 +59,15 @@ def compare_versions(a: str, b: str) -> int:
 
 def select_pending(upstream: list[str], released: list[str], blocked: list[str],
                    max_per_run: int) -> list[str]:
-    """upstream − released − blocked, newest first, capped at max_per_run (spec §8.1)."""
-    taken = set(released) | set(blocked)
-    pending = sorted((v for v in set(upstream) if v not in taken),
-                     key=cmp_to_key(compare_versions), reverse=True)
+    """upstream − released − blocked, newest first, capped at max_per_run (spec §8.1).
+
+    Released/blocked matching uses compare_versions equality, so equivalent
+    forms ("2.19" vs "2.19.0") block each other (spec §5).
+    """
+    taken = list(dict.fromkeys(list(released) + list(blocked)))
+    pending = [v for v in set(upstream)
+               if not any(compare_versions(v, t) == 0 for t in taken)]
+    pending.sort(key=cmp_to_key(compare_versions), reverse=True)
     return pending[:max_per_run]
 
 

@@ -28,12 +28,40 @@ jobs:
       skip: ${{ steps.idem.outputs.skip }}
       platform_independent: ${{ steps.manifest.outputs.platform_independent }}
       matrix: ${{ steps.manifest.outputs.matrix }}
+      timeout: ${{ steps.manifest.outputs.timeout }}
     steps:
+      # Runs in the tool repo's context — brain files must be checked out
+      # explicitly (spec §9.2).
       - uses: actions/checkout@v4
-      # M1: parse tools/<tool>/tool.toml → outputs; set skip=true if a
-      # published release v<version> already exists (idempotency, §9.2.1).
+        with:
+          repository: retropack/retropack
+
+      # Parse tools/<tool>/tool.toml → job outputs (spec §9.2.1).
       - id: manifest
-        run: echo "TODO parse tool.toml -> matrix outputs (M1)"
+        env:
+          TOOL: ${{ inputs.tool }}
+        run: |
+          python3 - "$TOOL" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib, sys, tomllib
+          tool = sys.argv[1]
+          t = tomllib.load(open(pathlib.Path("tools") / tool / "tool.toml", "rb"))
+          runners = {
+              "linux-x86_64": "ubuntu-latest",
+              "linux-aarch64": "ubuntu-24.04-arm",
+              "macos-aarch64": "macos-latest",
+          }
+          if t["tool"]["platform_independent"]:
+              # noarch: build once, publish.sh fans out to the three asset names.
+              matrix = [{"platform": "noarch", "runner": "ubuntu-latest"}]
+          else:
+              matrix = [{"platform": p, "runner": r} for p, r in runners.items()]
+          print(f"platform_independent={str(t['tool']['platform_independent']).lower()}")
+          print(f"matrix={json.dumps(matrix)}")
+          print(f"timeout={t['build'].get('timeout_minutes', 60)}")
+          PY
+
+      # Idempotency (spec §9.2.1): if published release v<version> exists →
+      # skip=true and all later jobs short-circuit. Needs the GitHub API (M1).
       - id: idem
         run: echo "skip=false" >> "$GITHUB_OUTPUT"
 
@@ -42,15 +70,19 @@ jobs:
     if: needs.prepare.outputs.skip != 'true'
     strategy:
       matrix:
-        platform: ${{ fromJson(needs.prepare.outputs.matrix) }}
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.timeout) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: retropack/retropack
       # M1 (§9.2.2): scripts/fetch-source.sh → build-linux.sh / build-macos.sh
       # → tools/<tool>/test.sh ($PREFIX) → check-portability.sh → package.sh →
       # upload artifact dist-<platform>.
       - run: echo "TODO fetch, build, test, portability, package (M1)"
+        env:
+          PLATFORM: ${{ matrix.platform }}
 
   publish:
     needs: [prepare, build]
@@ -58,9 +90,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # M1 (§9.2.3): download artifacts, fan noarch out to 3 platform names,
-      # SHA256SUMS + .sha256, scripts/publish.sh (draft → assets → attest →
-      # undraft, spec §7.4).
+        with:
+          repository: retropack/retropack
+      # M1 (§9.2.3): download artifacts, fan noarch out to 3 platform names
+      # (inputs.platform_independent / matrix), SHA256SUMS + .sha256,
+      # scripts/publish.sh (draft → assets → attest → undraft, spec §7.4).
       - run: echo "TODO checksums, publish.sh, attest (M1)"
 
   accept:
@@ -72,6 +106,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: retropack/retropack
       # M1 (§9.2.4): install mise, mise install github:retropack/<tool>@<version>,
       # run tools/<tool>/test.sh with PREFIX=$(mise where …).
       - run: echo "TODO mise acceptance install + test.sh (M1)"

@@ -12,7 +12,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALPINE_PACKAGES="$(python3 - "$REPO_ROOT/tools/$TOOL/tool.toml" <<'PY'
 import tomllib, sys
-t = tomllib.loads(open(sys.argv[1], "rb").read())
+t = tomllib.load(open(sys.argv[1], "rb"))
 print(" ".join(t["build"].get("alpine_packages", [])))
 PY
 )"
