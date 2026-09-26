@@ -3,7 +3,7 @@ name         = "sdcc"
 description  = "Small Device C Compiler (6502/Z80 ports)"
 homepage     = "https://sdcc.sourceforge.net"
 license      = "GPL-2.0"
-license_files = ["COPYRIGHT.txt"]
+license_files = ["COPYING", "LICENSE"]
 platform_independent = false
 runtime_requirements = []
 

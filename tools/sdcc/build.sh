@@ -11,6 +11,19 @@ cd "$SRC"
 ./configure --prefix="$PREFIX" \
   --disable-pic14-port --disable-pic16-port \
   --disable-non-free --disable-ucsim --disable-doc
+# sdcc's vendored sdbinutils links through libtool, which swallows plain
+# -static: its c++filt/sdar/sdnm/sdobjcopy/sdranlib came out dynamically
+# linked against musl (unusable on glibc hosts; check-portability failure).
+# libtool's -all-static forwards -static to gcc (verified: static-pie).
+# AM_LDFLAGS (not LDFLAGS): it reaches the automake/libtool link lines but
+# never configure's conftests — gcc rejects the unknown -all-static there,
+# and an LDFLAGS override broke the nested configure steps. Scoped to this
+# one target; the override reaches the sub-make via MAKEFLAGS.
+make -j"$NPROC" sdcc-sdbinutils AM_LDFLAGS="-all-static"
 make -j"$NPROC"
 make install
+# libtool .la metadata embeds absolute build paths (spec §6.4 forbids them) and
+# is only needed to relink against those internal binutils libs with libtool —
+# which sdcc users never do. Dropping them is standard distro practice.
+rm -f "$PREFIX"/lib/*.la
 # Relocatability (bin/../share/sdcc) is proven by test.sh from an arbitrary path.
