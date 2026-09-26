@@ -13,6 +13,9 @@ def run_fetch(tmp_path, url, tool, version, strip_from_manifest=True):
     work.mkdir(exist_ok=True)
     env = dict(os.environ, TOOL=tool, VERSION=version,
                WORK=str(work), SRC_URL=url)
+    # Don't inherit a caller's SRC (e.g. a just-run local build exports it):
+    # fetch-source.sh honors SRC over $WORK/src and would extract into it.
+    env.pop("SRC", None)
     return subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
 
 

@@ -11,7 +11,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/tools/$TOOL/tool.toml"
-DIST="$REPO_ROOT/dist"
+# DIST is overridable so tests never write into (or delete) the real dist/.
+DIST="${DIST:-$REPO_ROOT/dist}"
 mkdir -p "$DIST"
 
 # PREFIX is already <work>/<tool>-<version>/; tar runs from its parent below.
@@ -74,8 +75,10 @@ for field, value in {
     "patches": patches_field,
     "platform": platform,
     "build_date": datetime.date.today().isoformat(),
-    "run_url": os.environ.get("GITHUB_SERVER_URL", "") + "/" + os.environ.get("GITHUB_REPOSITORY", "")
-        + "/actions/runs/" + os.environ.get("GITHUB_RUN_ID", ""),
+    "run_url": (
+        os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"]
+        + "/actions/runs/" + os.environ["GITHUB_RUN_ID"]
+        if os.environ.get("GITHUB_RUN_ID") else "n/a (local build)"),
     "runtime_requirements": ", ".join(tool.get("runtime_requirements", [])) or "none",
 }.items():
     notice = notice.replace("{{%s}}" % field, value)

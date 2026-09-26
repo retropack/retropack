@@ -14,7 +14,8 @@ def make_env(tmp_path, license_in_src=True):
     if license_in_src:
         (src / "LICENSE").write_text("Zlib licence text\n")
     env = dict(os.environ, TOOL="cc65", VERSION="2.19",
-               PLATFORM="linux-x86_64", PREFIX=str(prefix), SRC=str(src))
+               PLATFORM="linux-x86_64", PREFIX=str(prefix), SRC=str(src),
+               DIST=str(tmp_path / "dist"))
     return env, prefix
 
 
@@ -26,7 +27,7 @@ def test_package_succeeds_and_ships_licence_and_notice(tmp_path):
     env, prefix = make_env(tmp_path)
     r = run(tmp_path, env)
     assert r.returncode == 0, r.stderr
-    dist = REPO / "dist" / "cc65-2.19-linux-x86_64.tar.gz"
+    dist = tmp_path / "dist" / "cc65-2.19-linux-x86_64.tar.gz"
     assert dist.exists()
     with tarfile.open(dist) as tf:
         names = tf.getnames()
@@ -42,4 +43,4 @@ def test_package_fails_when_licence_missing(tmp_path):
     env, prefix = make_env(tmp_path, license_in_src=False)
     r = run(tmp_path, env)
     assert r.returncode != 0, "archive must not be produced without upstream LICENSE"
-    assert not (REPO / "dist" / "cc65-2.19-linux-x86_64.tar.gz").exists()
+    assert not (tmp_path / "dist" / "cc65-2.19-linux-x86_64.tar.gz").exists()

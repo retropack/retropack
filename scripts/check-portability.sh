@@ -11,19 +11,21 @@ fail() { echo "check-portability: $*" >&2; exit 1; }
 
 case "$PLATFORM" in
   linux-*)
-    for f in "$PREFIX"/bin/*; do
-      [ -f "$f" ] || continue
+    for f in "$PREFIX"/bin/* "$PREFIX"/libexec/*; do
+      [ -e "$f" ] || continue
       # Skip non-ELF entries (JVM wrapper scripts).
       file -b "$f" | grep -q "^ELF" || continue
-      file -b "$f" | grep -q "statically linked" || fail "$f is not statically linked: $(file -b "$f")"
+      # static-pie is fully static too (newer Alpine gcc default for -static);
+      # the readelf NEEDED check below is the authoritative dynamic-deps guard.
+      file -b "$f" | grep -qE "statically linked|static-pie linked" || fail "$f is not statically linked: $(file -b "$f")"
       if readelf -d "$f" 2>/dev/null | grep -q NEEDED; then
         fail "$f has dynamic NEEDED entries"
       fi
     done
     ;;
   macos-*)
-    for f in "$PREFIX"/bin/*; do
-      [ -f "$f" ] || continue
+    for f in "$PREFIX"/bin/* "$PREFIX"/libexec/*; do
+      [ -e "$f" ] || continue
       file -b "$f" | grep -q "Mach-O" || continue
       # Only /usr/lib and /System dylibs allowed.
       otool -L "$f" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/)' \

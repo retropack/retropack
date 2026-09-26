@@ -18,9 +18,29 @@ PY
 )"
 NPROC="${NPROC:-$(nproc)}"
 
-docker run --rm -v "$REPO_ROOT:/work/brain" -v "$WORK:/work" -w /work \
+# Host $WORK is mounted at /work inside the container (spec §6.2), so env
+# paths living under $WORK must be translated to their container form.
+to_container() {
+  case "$1" in
+    "$WORK"/*) printf '/work/%s' "${1#"$WORK"/}" ;;
+    *)          printf '%s' "$1" ;;
+  esac
+}
+
+# SELinux (Fedora): bind mounts from $HOME need a private label or the
+# container gets EACCES; gated on getenforce so CI runners are unaffected.
+LABEL_SUFFIX=""
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+  LABEL_SUFFIX=":Z"
+fi
+
+docker run --rm \
+  -v "$REPO_ROOT:/work/brain$LABEL_SUFFIX" \
+  -v "$WORK:/work$LABEL_SUFFIX" \
+  -w /work \
   -e TOOL="$TOOL" -e VERSION="$VERSION" -e PLATFORM \
-  -e OS -e ARCH -e SRC="$SRC" -e PREFIX="$PREFIX" -e NPROC="$NPROC" \
+  -e OS -e ARCH -e SRC="$(to_container "$SRC")" -e PREFIX="$(to_container "$PREFIX")" \
+  -e NPROC="$NPROC" \
   -e CC=gcc -e CXX=g++ -e CFLAGS="-O2" -e LDFLAGS="-static" \
   -e ALPINE_PACKAGES="$ALPINE_PACKAGES" \
   alpine:3 sh -c 'apk add --no-cache $ALPINE_PACKAGES && sh /work/brain/tools/$TOOL/build.sh'
