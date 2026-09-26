@@ -1,0 +1,56 @@
+name: watch
+
+on:
+  schedule:
+    - cron: "17 5 * * *"     # daily, off the hour (spec §8.2)
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "limit to one tool (optional)"
+        required: false
+      version:
+        description: "force a specific version (bypasses released/blocked checks)"
+        required: false
+      dry_run:
+        type: boolean
+        default: false
+
+concurrency:
+  group: watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # M1: watch.py fetches upstream versions, diffs against published
+      # releases and open build-failure issues, then repository_dispatches
+      # retropack/<tool> (spec §8.1).
+      - name: detect missing (tool, version) pairs
+        run: |
+          FLAGS=""
+          [ -n "${{ inputs.tool }}" ] && FLAGS="$FLAGS --tool ${{ inputs.tool }}"
+          [ -n "${{ inputs.version }}" ] && FLAGS="$FLAGS --version ${{ inputs.version }}"
+          [ "${{ inputs.dry_run }}" = "true" ] && FLAGS="$FLAGS --dry-run"
+          python3 scripts/watch.py $FLAGS
+
+  # Re-enable the workflow as the last step of every run — resets GitHub's
+  # 60-day inactivity timer without a dummy commit (spec §8.3).
+  keep-alive:
+    if: always()
+    needs: detect
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/enable"
+        env:
+          GH_TOKEN: "${{ github.token }}"

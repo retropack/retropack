@@ -1,0 +1,88 @@
+name: build
+
+# Reusable build/test/publish pipeline (spec §9.2), triggered by each tool
+# repo's release.yml stub via repository_dispatch → workflow_dispatch chain.
+
+on:
+  workflow_call:
+    inputs:
+      tool:
+        description: "tool name, e.g. cc65"
+        required: true
+        type: string
+      version:
+        description: "upstream version, e.g. 2.19"
+        required: true
+        type: string
+
+permissions:
+  contents: write        # create release, tags
+  id-token: write        # attestation signing
+  attestations: write
+  issues: write          # build-failure issues
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.idem.outputs.skip }}
+      platform_independent: ${{ steps.manifest.outputs.platform_independent }}
+      matrix: ${{ steps.manifest.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      # M1: parse tools/<tool>/tool.toml → outputs; set skip=true if a
+      # published release v<version> already exists (idempotency, §9.2.1).
+      - id: manifest
+        run: echo "TODO parse tool.toml -> matrix outputs (M1)"
+      - id: idem
+        run: echo "skip=false" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    strategy:
+      matrix:
+        platform: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.timeout) }}
+    steps:
+      - uses: actions/checkout@v4
+      # M1 (§9.2.2): scripts/fetch-source.sh → build-linux.sh / build-macos.sh
+      # → tools/<tool>/test.sh ($PREFIX) → check-portability.sh → package.sh →
+      # upload artifact dist-<platform>.
+      - run: echo "TODO fetch, build, test, portability, package (M1)"
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # M1 (§9.2.3): download artifacts, fan noarch out to 3 platform names,
+      # SHA256SUMS + .sha256, scripts/publish.sh (draft → assets → attest →
+      # undraft, spec §7.4).
+      - run: echo "TODO checksums, publish.sh, attest (M1)"
+
+  accept:
+    needs: [prepare, publish]
+    if: needs.prepare.outputs.skip != 'true'
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      # M1 (§9.2.4): install mise, mise install github:retropack/<tool>@<version>,
+      # run tools/<tool>/test.sh with PREFIX=$(mise where …).
+      - run: echo "TODO mise acceptance install + test.sh (M1)"
+
+  on-failure:
+    if: failure()
+    needs: [prepare, build, publish, accept]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      # M1 (§9.2.5): create/refresh issue "build failure: <tool> <version>"
+      # with label build-failure (title "acceptance failure:" if accept failed).
+      - run: echo "TODO open build-failure issue (M1)"
