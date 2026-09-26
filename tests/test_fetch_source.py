@@ -26,7 +26,7 @@ def test_zip_url_not_ending_in_zip_is_extracted(tmp_path):
     r = run_fetch(tmp_path, f"file://{z}", "tass64", "1.59.3121")
     assert r.returncode == 0, r.stderr
     src = tmp_path / "work" / "src"
-    # strip_components = 0 for tass64 → files land at SRC root (spec §10)
+    # strip_components = 1 for tass64 → top dir stripped, README at SRC root
     assert (src / "64tass-src" / "README").exists() or (src / "README").exists(), \
         f"nothing extracted: {list(src.rglob('*'))}; stderr={r.stderr}"
 
@@ -42,3 +42,15 @@ def test_targz_with_strip_components(tmp_path):
     # strip_components = 1 for cc65 (spec §5) → top dir stripped
     assert (tmp_path / "work" / "src" / "hello.c").exists(), \
         f"strip failed: {list((tmp_path / 'work' / 'src').rglob('*'))}"
+
+def test_tarbz2_with_strip_components(tmp_path):
+    # sdcc ships .tar.bz2 exclusively (verified: .tar.gz 404s for 4.4.0–4.6.0)
+    tbz = tmp_path / "src.tar.bz2"
+    with tarfile.open(tbz, "w:bz2") as tf:
+        payload = tmp_path / "hello.c"
+        payload.write_text("int x;\n")
+        tf.add(payload, arcname="sdcc-4.6.0/hello.c")
+    r = run_fetch(tmp_path, f"file://{tbz}", "sdcc", "4.6.0")
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "work" / "src" / "hello.c").exists(), \
+        f"bz2 extract failed: {r.stderr}"

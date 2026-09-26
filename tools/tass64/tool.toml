@@ -3,7 +3,7 @@ name         = "tass64"
 description  = "64tass cross-assembler for 6502/C64"
 homepage     = "https://sourceforge.net/projects/tass64/"
 license      = "GPL-2.0"
-license_files = ["COPYING"]
+license_files = ["LICENSE-GPL-2.0", "LICENSE-LGPL-2.0", "LICENSE-LGPL-2.1", "LICENSE-my_getopt"]
 platform_independent = false
 runtime_requirements = []
 
@@ -18,7 +18,7 @@ max_per_run = 2
 
 [source]
 url = "https://sourceforge.net/projects/tass64/files/source/64tass-{version}-src.zip/download"
-strip_components = 0
+strip_components = 1
 
 [build]
 mode = "source"

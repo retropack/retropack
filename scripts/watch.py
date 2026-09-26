@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """watch.py — upstream/released diff + dispatch (spec §8.1).
 
-Stdlib only. Pure logic (parsing, version compare, pending selection) is
-implemented and tested; network fetch + repository_dispatch land in M1.
+Stdlib only. Pure logic (parsing, version compare, pending selection,
+latest-version resolution) is implemented and tested; network fetch +
+repository_dispatch land in M1.
 """
 import argparse
+import json
+import os
 import re
+import subprocess
 import sys
+import tomllib
+import urllib.request
 from functools import cmp_to_key
 
 
@@ -76,9 +82,100 @@ def main(argv: list[str]) -> int:
     p.add_argument("--tool", help="limit to one tool")
     p.add_argument("--version", help="force a specific version (bypasses released/blocked)")
     p.add_argument("--dry-run", action="store_true")
-    p.parse_args(argv)
+    p.add_argument("--latest-for", metavar="TOOL",
+                   help="print the newest matching upstream version and exit")
+    args = p.parse_args(argv)
+    if args.latest_for:
+        try:
+            v = latest_version(args.latest_for)
+        except Exception as e:  # network/manifest errors → clear CLI failure
+            print(f"watch: {e}", file=sys.stderr)
+            return 1
+        if v is None:
+            print(f"watch: no matching upstream version for {args.latest_for}",
+                  file=sys.stderr)
+            return 1
+        print(v)
+        return 0
     print("TODO: fetch + dispatch (M1)")
     return 0
+
+
+# --- latest-version resolution (used by scripts/local-build.sh) ---
+
+def parse_lsremote(text: str, pattern: str) -> list[str]:
+    """Tag names out of `git ls-remote --tags --refs` output → versions."""
+    tags = [line.split("refs/tags/", 1)[1]
+            for line in text.splitlines() if "refs/tags/" in line]
+    return parse_tags(tags, pattern)
+
+
+def _json_strings(obj) -> list[str]:
+    if isinstance(obj, str):
+        return [obj]
+    if isinstance(obj, dict):
+        return [s for v in obj.values() for s in _json_strings(v)]
+    if isinstance(obj, list):
+        return [s for v in obj for s in _json_strings(v)]
+    return []
+
+
+def parse_sourceforge(best_release_json: str, rss_xml: str) -> list[str]:
+    """Candidate filenames from best_release.json + RSS (spec §8.1), basenamed
+    so anchored file_regexes can match regardless of the path around them."""
+    cands = []
+    try:
+        cands += _json_strings(json.loads(best_release_json))
+    except json.JSONDecodeError:
+        pass
+    cands += re.findall(r"<title>(.*?)</title>", rss_xml, re.S)
+    return [os.path.basename(c.strip()) for c in cands]
+
+
+def pick_latest(versions: list[str], min_version: str = "0.0",
+                skip_versions: list[str] | None = None) -> str | None:
+    """Newest version, honoring min_version / skip_versions (spec §5)."""
+    skip = set(skip_versions or [])
+    ok = [v for v in versions
+          if v not in skip and compare_versions(v, min_version) >= 0]
+    return max(ok, key=cmp_to_key(compare_versions)) if ok else None
+
+
+def _http(url: str) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": "retropack-watch"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def latest_version(tool: str) -> str | None:
+    """Newest upstream version of `tool` matching its tool.toml constraints."""
+    manifest = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "tools", tool, "tool.toml")
+    with open(manifest, "rb") as f:
+        cfg = tomllib.load(f)
+    up = cfg["upstream"]
+    if up["type"] == "github":
+        out = subprocess.run(
+            ["git", "ls-remote", "--tags", "--refs",
+             f"https://github.com/{up['repo']}.git"],
+            capture_output=True, text=True, check=True, timeout=60).stdout
+        versions = parse_lsremote(out, up["tag_regex"])
+    elif up["type"] == "gitlab":
+        out = subprocess.run(
+            ["git", "ls-remote", "--tags", "--refs",
+             f"https://gitlab.com/{up['repo']}.git"],
+            capture_output=True, text=True, check=True, timeout=60).stdout
+        versions = parse_lsremote(out, up["tag_regex"])
+    elif up["type"] == "sourceforge":
+        project = up["repo"]
+        candidates = parse_sourceforge(
+            _http(f"https://sourceforge.net/projects/{project}/best_release.json"),
+            _http(f"https://sourceforge.net/projects/{project}/rss?path=/"))
+        versions = parse_tags(candidates, up["file_regex"])
+    else:
+        raise ValueError(f"unknown upstream type: {up['type']}")
+    return pick_latest(versions, up.get("min_version", "0.0"),
+                       up.get("skip_versions"))
 
 
 if __name__ == "__main__":

@@ -35,11 +35,26 @@ curl -fsSL -o "$ARCHIVE" "$SRC_URL"
 MAGIC="$(head -c 2 "$ARCHIVE" | od -An -tx1 | tr -d ' \n')"
 case "$MAGIC" in
   504b*)                              # PK…
-    [ "$STRIP" = "0" ] || { echo "fetch-source: zip archives only supported with strip_components = 0" >&2; exit 1; }
     unzip -q -o "$ARCHIVE" -d "$SRC"
+    # unzip has no --strip-components: strip one level by moving the single
+    # top-level dir's contents up. (Ceiling: zips support strip 0/1 only —
+    # no current tool needs more.)
+    if [ "$STRIP" -ge 1 ]; then
+      [ "$STRIP" -le 1 ] || { echo "fetch-source: zip strip_components > 1 unsupported" >&2; exit 1; }
+      top=$(find "$SRC" -mindepth 1 -maxdepth 1)
+      n=$(printf '%s\n' "$top" | grep -c .)
+      if [ "$n" -ne 1 ] || [ ! -d "$top" ]; then
+        echo "fetch-source: expected a single top-level dir in zip to strip, found: $top" >&2
+        exit 1
+      fi
+      cp -a "$top"/. "$SRC"/ && rm -rf "$top"
+    fi
     ;;
   1f8b*)                              # gzip
     tar -xzf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
+    ;;
+  425a*)                              # BZh — sdcc ships .tar.bz2 exclusively
+    tar -xjf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
     ;;
   *)
     echo "fetch-source: unrecognized archive format for $SRC_URL (magic $MAGIC)" >&2

@@ -11,13 +11,13 @@ runtime_requirements = []
 type        = "sourceforge"
 repo        = "sdcc"
 tag_regex   = '^(?P<version>\d+\.\d+\.\d+)$'
-file_regex  = '^sdcc-src-(?P<version>\d+\.\d+\.\d+)\.tar\.gz$'
+file_regex  = '^sdcc-src-(?P<version>\d+\.\d+\.\d+)\.tar\.bz2$'
 min_version = "4.4.0"
 skip_versions = []
 max_per_run = 2
 
 [source]
-url = "https://sourceforge.net/projects/sdcc/files/sdcc/{version}/sdcc-src-{version}.tar.gz/download"
+url = "https://sourceforge.net/projects/sdcc/files/sdcc/{version}/sdcc-src-{version}.tar.bz2/download"
 strip_components = 1
 
 [build]

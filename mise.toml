@@ -1,0 +1,3 @@
+[tasks.build]
+description = "Local pipeline build of one tool for this machine: mise run build <tool> [version] (version defaults to latest upstream)"
+run = "./scripts/local-build.sh"

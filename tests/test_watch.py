@@ -43,3 +43,34 @@ def test_select_pending_dedupes_equivalent_versions():
 
 def test_main_stub_returns_zero():
     assert watch.main(["--dry-run"]) == 0
+
+# --- latest-version resolution (local-build default) ---
+
+def test_pick_latest_respects_min_and_skip():
+    assert watch.pick_latest(["1.59.3121", "1.59.3120", "1.58.0"],
+                             min_version="1.59.3120",
+                             skip_versions=["1.59.3121"]) == "1.59.3120"
+    assert watch.pick_latest(["4.4.0", "4.10.0"]) == "4.10.0"
+    assert watch.pick_latest(["2.18"], min_version="2.19") is None
+    assert watch.pick_latest([]) is None
+
+def test_parse_lsremote_extracts_tags():
+    text = ("abc123\trefs/tags/V2.19\n"
+            "abc124\trefs/tags/V2.18\n"
+            "abc125\trefs/tags/not-a-version\n")
+    assert watch.parse_lsremote(text, r"^V(?P<version>\d+\.\d+(?:\.\d+)?)$") \
+        == ["2.19", "2.18"]
+
+def test_parse_sourceforge_collects_filenames_from_best_release_and_rss():
+    import json as _json
+    best = _json.dumps({"release": {"filename": "64tass-1.59.3120-src.zip",
+                                     "url": "https://sf.example/x/download"}})
+    rss = ("<rss><channel><item><title>tass64/source/64tass-1.59.3119-src.zip"
+           "</title></item></channel></rss>")
+    names = watch.parse_sourceforge(best, rss)
+    assert "64tass-1.59.3120-src.zip" in names
+    assert "64tass-1.59.3119-src.zip" in names   # basename of the RSS title path
+    # composing with the manifest's file_regex yields normalized versions
+    versions = watch.parse_tags(
+        names, r"^64tass-(?P<version>\d+\.\d+\.\d+)-src\.zip$")
+    assert set(versions) >= {"1.59.3120", "1.59.3119"}
