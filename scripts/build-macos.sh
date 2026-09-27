@@ -26,11 +26,12 @@ print(' '.join(tomllib.load(open('$REPO_ROOT/tools/$TOOL/tool.toml', 'rb'))['bui
   done
   export PATH
   # Apple clang does not search Homebrew's prefix by default — sdcc's
-  # configure dies on boost/graph/adjacency_list.hpp without this (headers
-  # live in $BREW_PREFIX/include; boost is header-only so the -L never puts a
-  # Homebrew dylib in the binary — check-portability enforces that).
+  # configure dies on boost/graph/adjacency_list.hpp without this. Headers
+  # only: boost is header-only in sdcc (spec §10). NO -L: handing ld
+  # $BREW_PREFIX/lib let sdbinutils' c++filt pick up Homebrew's
+  # libzstd/libintl dylibs, which check-portability rightly rejects (§6.4:
+  # macOS binaries may link /usr/lib and /System only) — run 36326808571.
   export CPPFLAGS="${CPPFLAGS:+$CPPFLAGS }-I$BREW_PREFIX/include"
-  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$BREW_PREFIX/lib"
 fi
 export CC=clang CXX=clang++
 export MACOSX_DEPLOYMENT_TARGET=12.0
