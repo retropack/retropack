@@ -25,6 +25,9 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
+    outputs:
+      pending: ${{ steps.detect.outputs.pending }}
+      tools: ${{ steps.detect.outputs.tools }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,22 +37,64 @@ jobs:
         with:
           python-version: "3.12"
 
-      # M1: watch.py fetches upstream versions, diffs against published
-      # releases and open build-failure issues, then repository_dispatches
-      # retropack/<tool> (spec §8.1).
+      # spec §8.1: upstream fetch → released/blocked diff → pending map.
       # Inputs arrive via env, never interpolated into the script text —
-      # ${{ }} inside run: is shell injection (security review).
-      - name: detect missing (tool, version) pairs
+      # ${{ }} inside run: is shell injection (security review). GITHUB_TOKEN
+      # is this job's read-only token; the App key exists only in dispatch.
+      - name: detect pending builds
+        id: detect
         env:
+          GH_TOKEN: ${{ github.token }}
           IN_TOOL: ${{ inputs.tool }}
           IN_VERSION: ${{ inputs.version }}
-          IN_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set --
           [ -n "$IN_TOOL" ] && set -- "$@" --tool "$IN_TOOL"
           [ -n "$IN_VERSION" ] && set -- "$@" --version "$IN_VERSION"
-          [ "$IN_DRY_RUN" = "true" ] && set -- "$@" --dry-run
-          python3 scripts/watch.py "$@"
+          pending=$(python3 scripts/watch.py --detect "$@")
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+          tools=$(printf '%s' "$pending" | python3 -c "import json,sys; print(json.dumps(list(json.load(sys.stdin))))")
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          echo "pending: $pending"
+
+  # One matrix leg per tool so each token is minted for EXACTLY one repo
+  # (security review: per-target scoping; permission-contents only — all
+  # repository_dispatch needs). The App key lives in this job alone.
+  dispatch:
+    needs: detect
+    if: needs.detect.outputs.pending != '{}' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: ${{ fromJson(needs.detect.outputs.tools) }}
+    steps:
+      - name: mint app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RETROPACK_APP_ID }}
+          private-key: ${{ secrets.RETROPACK_APP_PRIVATE_KEY }}
+          repositories: ${{ matrix.tool }}
+          permission-contents: write
+
+      - name: dispatch builds (spec §8.1)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TOOL: ${{ matrix.tool }}
+          PENDING: ${{ needs.detect.outputs.pending }}
+        run: |
+          versions=$(printf '%s' "$PENDING" \
+            | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin)[sys.argv[1]]))" "$TOOL")
+          for v in $versions; do
+            # jq --arg passes the version as data — injection-proof, and a
+            # version like 4.5.0 is a string, not parseable JSON.
+            payload=$(jq -nc --arg v "$v" \
+              '{event_type:"build",client_payload:{version:$v}}')
+            printf '%s' "$payload" \
+              | gh api -X POST "repos/retropack/$TOOL/dispatches" --input - > /dev/null
+            echo "dispatched retropack/$TOOL build $v"
+          done
 
   # Re-enable the workflow as the last step of every run — resets GitHub's
   # 60-day inactivity timer without a dummy commit (spec §8.3).

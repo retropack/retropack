@@ -76,6 +76,37 @@ def test_release_asset_url_selects_tag_and_link():
         else:
             raise AssertionError(f"expected ValueError for {bad}")
 
+def test_released_from_api_strips_v_skips_draft_and_prerelease():
+    import json as _json
+    api = _json.dumps([
+        {"tag_name": "v2.19", "draft": False, "prerelease": False},
+        {"tag_name": "v9.9.9", "draft": True, "prerelease": False},
+        {"tag_name": "v8.8.8", "draft": False, "prerelease": True},
+        {"tag_name": "v2.18", "draft": False, "prerelease": False},
+    ])
+    assert watch.released_from_api(api) == ["2.19", "2.18"]
+
+def test_blocked_from_issues_parses_both_title_kinds():
+    import json as _json
+    issues = _json.dumps([
+        {"title": "build failure: tass64 1.58.2974", "number": 1},
+        {"title": "acceptance failure: tass64 1.57.2900", "number": 2},
+        {"title": "build failure: sdcc 4.6.0", "number": 3},          # other tool
+        {"title": "kickc: some unrelated discussion", "number": 4},
+        {"pull_request": {}, "title": "build failure: tass64 9.9.9", "number": 5},  # PR, not issue
+    ])
+    assert watch.blocked_from_issues(issues, "tass64") == ["1.58.2974", "1.57.2900"]
+    assert watch.blocked_from_issues(issues, "sdcc") == ["4.6.0"]
+    assert watch.blocked_from_issues(issues, "kickc") == []
+
+def test_eligible_filters_min_and_skip():
+    # detect() keeps ALL pending versions (not just the latest) — the min/skip
+    # policy must still apply to every one of them (spec §5).
+    out = watch.eligible(["1.58.2974", "1.59.3120", "1.60.3243"],
+                         min_version="1.59.3120", skip_versions=[])
+    assert out == ["1.59.3120", "1.60.3243"]
+    assert watch.eligible(["1.59.3120"], "1.59.3120", ["1.59.3120"]) == []
+
 # --- latest-version resolution (local-build default) ---
 
 def test_pick_latest_respects_min_and_skip():
