@@ -272,14 +272,13 @@ Invoked twice with `PREFIX` pointing at (a) the freshly built prefix on the buil
 <tool>-<version>-linux-aarch64.tar.gz
 <tool>-<version>-macos-aarch64.tar.gz
 SHA256SUMS
-<asset>.sha256                  # one per archive
 ```
 
 *   No libc tag in the name (binaries are static; keeps mise autodetection unambiguous).
     
 *   Platform-independent tools publish the **same bytes** under all three platform names, so mise autodetection always finds a match. (A single `-noarch` asset is not used: autodetection behaviour for names without OS/arch tokens is not guaranteed.)
     
-*   Both `SHA256SUMS` and per-asset `.sha256` are published during M1; after confirming which form mise picks up, keep that one and drop the other (tracked in §13 open items).
+*   `SHA256SUMS` (aggregate, for humans and `sha256sum -c`) ships with every release. Per-asset `.sha256` files were **dropped after M1**: mise's github backend verifies downloads via the **GitHub API asset digest** (`using GitHub API digest for checksum verification` in `MISE_LOG_LEVEL=debug mise install`) — it reads neither checksum file (resolved §13 item).
     
 
 ### 7.2 Archive layout
@@ -307,7 +306,7 @@ Generated from template; contains: tool name/version, upstream homepage, exact s
     
 3.  Create release `v<version>` as **draft** targeting `main`, generated notes disabled, body from template (upstream link, install snippet, checksums).
     
-4.  Upload all assets + `SHA256SUMS` + `.sha256` files.
+4.  Upload all assets + `SHA256SUMS`.
     
 5.  Run `actions/attest-build-provenance` on all archives (`subject-path: dist/*.tar.gz`).
     
@@ -413,7 +412,7 @@ Inputs: `tool`, `version`. Jobs:
     
 2.  `build` (matrix over platforms, or single `noarch` job): checkout brain; `fetch-source.sh` (download, apply `patches/`); `build-linux.sh` / `build-macos.sh` / direct; `test.sh` against `$PREFIX`; `check-portability.sh`; `package.sh` → `dist/<asset>`; upload as artifact `dist-<platform>`. `timeout-minutes` from manifest.
     
-3.  `publish` (ubuntu-latest, needs build): download all artifacts; for `noarch` fan the single archive out to the three names; generate `SHA256SUMS` + `.sha256`; `publish.sh` (§7.4) with `attest-build-provenance` between upload and undraft. Uses the tool repo's `GITHUB_TOKEN` (the run belongs to the tool repo).
+3.  `publish` (ubuntu-latest, needs build): download all artifacts; for `noarch` fan the single archive out to the three names; generate `SHA256SUMS`; `publish.sh` (§7.4) with `attest-build-provenance` between upload and undraft. Uses the tool repo's `GITHUB_TOKEN` (the run belongs to the tool repo).
     
 4.  `accept` (matrix over the three runners, needs publish): install mise (`curl https://mise.run | sh`), `mise install "github:retropack/<tool>@<version>"` with `MISE_GITHUB_TOKEN=$GITHUB_TOKEN`, then run `tools/<tool>/test.sh` with `PREFIX=$(mise where github:retropack/<tool>@<version>)`. This proves: asset autodetection works on each platform, attestation verification passes, archive layout is right. Runs after publish because mise cannot install from a draft; a failure here opens an issue like any other failure (the release stays published — see 9.3).
     
@@ -529,14 +528,15 @@ The App is installed org-wide, so no credential step.
 
 ## 13. Open items to verify during M1
 
-- [ ] Which checksum file form mise's github backend discovers (`SHA256SUMS` vs `<asset>.sha256`); keep one.
-- [ ] mise attestation verification passes for releases created in the tool repo by the reusable workflow (builder identity is `retropack/<tool>/.github/workflows/release.yml` → `retropack/retropack/.github/workflows/build.yml`).
-- [ ] cc65 relocatable data-dir lookup without `CC65_HOME` from a mise install dir.
-- [ ] sdcc relocatable `include/lib` lookup; actual minimal Alpine package set; build time within budget.
-- [ ] `docker run` availability/perf on `ubuntu-24.04-arm`.
-- [ ] Actual tag/release schemes for oscar64 and kickc; whether kickc GitLab releases carry a distribution zip.
-- [ ] SourceForge `best_release.json` + RSS give complete-enough version lists for backfill (else restrict `min_version` to current).
-- [ ] mise picks the identical-bytes noarch archives correctly on all three platforms.
+- [x] Which checksum file form mise's github backend discovers (`SHA256SUMS` vs `<asset>.sha256`); keep one. — **Resolved (M1 E2E): neither.** mise verifies via the GitHub API asset digest (`using GitHub API digest for checksum verification`); per-asset `.sha256` dropped, `SHA256SUMS` kept for humans (§7.1 updated).
+- [x] mise attestation verification passes for releases created in the tool repo by the reusable workflow (builder identity is `retropack/<tool>/.github/workflows/release.yml` → `retropack/retropack/.github/workflows/build.yml`). — **Resolved:** `mise install` logs `[2/3] ✓ GitHub artifact attestations verified`; the bundle predicate names `retropack/cc65/.github/workflows/release.yml` with `builder.id = retropack/retropack/.github/workflows/build.yml@refs/heads/main`, and the signing certificate SANs carry both workflow URIs. (`gh attestation verify` on one workstation failed in its TUF-root fetch — client-side, same bundle passes mise's verifier.)
+- [x] cc65 relocatable data-dir lookup without `CC65_HOME` from a mise install dir. — **Resolved:** V2.19 has no exe-relative lookup (verified), so archives ship `bin/<tool>` launchers exporting `CC65_HOME` (spec §7.2 wrapper mechanism) + real binaries in `libexec/`; `test.sh` passes from an arbitrary cwd and against a fresh `mise install github:retropack/cc65@2.19` with `CC65_HOME` unset.
+- [x] sdcc relocatable `include/lib` lookup; actual minimal Alpine package set; build time within budget. — **Resolved locally (linux-x86_64):** `bin/../share/sdcc` lookup proven by `test.sh` run from a temp dir; Alpine set = `build-base boost-dev boost-static bison flex zlib-dev zlib-static texinfo` (build green, well under the 90-minute budget); plus M1 fixes found en route: bundled sdbinutils needed `AM_LDFLAGS=-all-static` (libtool swallowed plain `-static`) and `lib/*.la` are removed post-install (absolute build paths, §6.4). CI-matrix run still pending.
+- [x] `docker run` availability/perf on `ubuntu-24.04-arm`. — **Resolved:** green runs 36310688371 + 36312373408; full fetch→build→test→portability→package within the job timeout.
+- [x] Actual tag/release schemes for oscar64 and kickc. — **Resolved:** oscar64 = `v`-prefixed tags (`v1.32.273`, built green); kickc = bare version tags (`0.8.6`) on GitLab releases.
+- [ ] Whether kickc GitLab releases carry a distribution zip (`build.mode = repackage` vs `source`) — deferred to M3; kickc is a stub until then.
+- [ ] SourceForge `best_release.json` + RSS give complete-enough version lists for backfill (else restrict `min_version` to current). — **Partially resolved:** `best_release.json` yields the latest fine (tass64 → 1.60.3243, sdcc → 4.6.0); `rss?path=/` returned no file titles for sdcc, so backfill *depth* stays unproven.
+- [ ] mise picks the identical-bytes noarch archives correctly on all three platforms. — still untested; needs the first `platform_independent` tool (kickc, M3).
 
 * * *
 

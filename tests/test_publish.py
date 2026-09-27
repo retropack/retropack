@@ -50,10 +50,13 @@ def test_assets_fans_out_noarch_to_three_platforms(tmp_path):
     sums = dist / "SHA256SUMS"
     assert sums.exists()
     assert len(sums.read_text().splitlines()) == 3
-    assert (dist / "kickc-0.8.6-linux-x86_64.tar.gz.sha256").exists()
-    # per-asset .sha256 must verify
-    content = (dist / "kickc-0.8.6-linux-x86_64.tar.gz.sha256").read_text().split()
-    assert content[0] == sha(dist / "kickc-0.8.6-linux-x86_64.tar.gz")
+    # §13 resolution: mise verifies via GitHub's API asset digest — it never
+    # fetches per-asset .sha256 files, so only the human-facing SHA256SUMS ships.
+    assert not list(dist.glob("*.sha256")), "per-asset .sha256 dropped (§7.1 resolved)"
+    # SHA256SUMS must be verifiable with sha256sum -c
+    for line in sums.read_text().splitlines():
+        digest, name = line.split()
+        assert digest == sha(dist / name)
 
 
 def test_assets_platform_specific_keeps_names_adds_checksums(tmp_path):
@@ -63,7 +66,6 @@ def test_assets_platform_specific_keeps_names_adds_checksums(tmp_path):
     assert r.returncode == 0, r.stderr
     assert (dist / "cc65-2.19-linux-x86_64.tar.gz").exists()
     assert (dist / "SHA256SUMS").exists()
-    assert (dist / "cc65-2.19-linux-x86_64.tar.gz.sha256").exists()
     # exactly one archive line
     assert len((dist / "SHA256SUMS").read_text().splitlines()) == 1
 

@@ -2,8 +2,9 @@
 # publish.sh — release publishing for the retropack pipeline (spec §7.4).
 #
 # usage: scripts/publish.sh <assets|upload|release>
-#   assets  — noarch fan-out to the three platform names + SHA256SUMS +
-#             one .sha256 per asset (spec §7.1). Local filesystem only.
+#   assets  — noarch fan-out to the three platform names + aggregate
+#             SHA256SUMS (spec §7.1; per-asset .sha256 dropped after §13
+#             showed mise verifies via GitHub's API asset digest).
 #   upload  — spec §7.4 steps 1–4: published-release short-circuit, delete
 #             stale draft, create draft targeting main, upload all assets.
 #   release — spec §7.4 step 6: draft → published, --latest only when this
@@ -51,14 +52,12 @@ assets() {
     exit 1
   fi
 
-  # Both checksum forms are published during M1; §13 decides which one mise
-  # discovers and we drop the other.
+  # One aggregate SHA256SUMS for humans (§13 resolved: mise verifies via
+  # GitHub's API asset digest — it never reads per-asset .sha256 files, so
+  # those are no longer published). The rm clears stale ones from old runs.
   rm -f "$DIST"/SHA256SUMS "$DIST"/*.sha256
   (
     cd "$DIST"
-    for a in *.tar.gz; do
-      sha256sum "$a" > "$a.sha256"
-    done
     sha256sum -- *.tar.gz > SHA256SUMS
   )
   echo "publish: assets prepared in $DIST"
@@ -109,9 +108,9 @@ upload() {
   gh release create "$tag" --repo "$repo" --draft --target main \
     --title "$tag" --notes "$notes"
 
-  # 4. Upload every asset: archives, the aggregate, and the per-asset files.
+  # 4. Upload every asset: the archives and the aggregate SHA256SUMS.
   gh release upload "$tag" --repo "$repo" --clobber \
-    "$DIST"/*.tar.gz "$DIST"/SHA256SUMS "$DIST"/*.sha256
+    "$DIST"/*.tar.gz "$DIST"/SHA256SUMS
   echo "publish: $tag draft uploaded"
 }
 
