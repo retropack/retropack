@@ -56,6 +56,26 @@ def test_latest_flag_only_highest_wins():
     releases.append({"tag_name": "v5.0.0", "draft": False, "prerelease": True})
     assert watch.latest_flag("4.6.0", releases) == "true"
 
+def test_release_asset_url_selects_tag_and_link():
+    import json as _json
+    doc = _json.dumps([
+        {"tag_name": "0.8.5", "assets": {"links": [
+            {"name": "Binary", "url": "https://bit.ly/older"}]}},
+        {"tag_name": "0.8.6", "assets": {"links": [
+            {"name": "Binary", "url": "https://bit.ly/newer"},
+            {"name": "Other", "url": "https://example.com/x"}]}},
+    ])
+    assert watch.release_asset_url(doc, "0.8.6", "Binary") == "https://bit.ly/newer"
+    assert watch.release_asset_url(doc, "0.8.6", "Other") == "https://example.com/x"
+    # loud failures (fetch-source turns them into build errors)
+    for bad in (("0.9.0", "Binary"), ("0.8.5", "Missing")):
+        try:
+            watch.release_asset_url(doc, *bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad}")
+
 # --- latest-version resolution (local-build default) ---
 
 def test_pick_latest_respects_min_and_skip():

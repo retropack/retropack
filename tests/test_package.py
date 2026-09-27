@@ -45,6 +45,30 @@ def test_package_fails_when_licence_missing(tmp_path):
     assert r.returncode != 0, "archive must not be produced without upstream LICENSE"
     assert not (tmp_path / "dist" / "cc65-2.19-linux-x86_64.tar.gz").exists()
 
+def test_package_prefers_recorded_source_url(tmp_path):
+    # Repackage builds download a per-version asset (GitLab wiki upload behind
+    # a redirect) — fetch-source records the effective URL and the notice must
+    # cite THAT, while the tag still derives from the manifest pattern.
+    import os, tarfile
+    prefix = tmp_path / "work" / "kickc-0.8.6"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / "kickc").write_text("#!/bin/sh\n")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "LICENSE.txt").write_text("MIT\n")
+    work = tmp_path / "work"
+    (work / ".source-url").write_text(
+        "https://gitlab.com/camelot/kickc/-/wikis/uploads/abc123/kickc_0.8.6.zip\n")
+    env = dict(os.environ, TOOL="kickc", VERSION="0.8.6", PLATFORM="noarch",
+               PREFIX=str(prefix), SRC=str(src), WORK=str(work),
+               DIST=str(tmp_path / "dist"))
+    r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    with tarfile.open(tmp_path / "dist" / "kickc-0.8.6-noarch.tar.gz") as tf:
+        notice = tf.extractfile("kickc-0.8.6/RETROPACK-NOTICE").read().decode()
+    assert "wikis/uploads/abc123/kickc_0.8.6.zip" in notice, notice
+    assert "(tag 0.8.6)" in notice, notice   # tag still from the manifest pattern
+
 def test_package_handles_readonly_prefix(tmp_path):
     # CI builds run in rootful docker → $PREFIX is root:root 755 while the
     # packaging step runs as the unprivileged runner (first real run died on

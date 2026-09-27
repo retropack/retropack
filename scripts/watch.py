@@ -89,6 +89,22 @@ def latest_flag(version: str, releases: list[dict]) -> str:
     return "true" if highest else "false"
 
 
+def release_asset_url(releases_json: str, tag: str, link_name: str) -> str:
+    """Pick a named asset link's URL for `tag` from a GitLab releases JSON
+    document (kickc's distribution zip lives behind a release asset link).
+    Raises ValueError when the release or link is missing — the caller
+    (fetch-source) turns that into a loud build failure.
+    """
+    for rel in json.loads(releases_json):
+        if rel.get("tag_name") == tag:
+            for link in (rel.get("assets") or {}).get("links") or []:
+                if link.get("name") == link_name and link.get("url"):
+                    return link["url"]
+            raise ValueError(
+                f"release {tag} has no asset link named {link_name!r}")
+    raise ValueError(f"no upstream release for tag {tag}")
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="watch.py", description="detect missing (tool, version) pairs")
     p.add_argument("--tool", help="limit to one tool")

@@ -12,17 +12,46 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/tools/$TOOL/tool.toml"
 [ -f "$MANIFEST" ] || { echo "fetch-source: no manifest $MANIFEST" >&2; exit 1; }
 
-read -r MANIFEST_URL STRIP <<EOF
+# Read manifest facts: mode gates the repackage path.
+read -r MODE MANIFEST_URL STRIP <<EOF
 $(python3 - "$MANIFEST" "$VERSION" <<'PY'
 import tomllib, sys
 manifest, version = sys.argv[1], sys.argv[2]
 t = tomllib.load(open(manifest, "rb"))
-print(t["source"]["url"].replace("{version}", version), t["source"].get("strip_components", 1))
+print(
+    t["build"].get("mode", "source"),
+    t["source"]["url"].replace("{version}", version),
+    t["source"].get("strip_components", 1),
+)
 PY
 )
 EOF
-# SRC_URL override exists for tests (tests/test_fetch_source.py); production uses the manifest.
-SRC_URL="${SRC_URL:-$MANIFEST_URL}"
+
+# SRC_URL env override exists for tests (tests/test_fetch_source.py).
+if [ -z "${SRC_URL:-}" ]; then
+  if [ "$MODE" = "repackage" ]; then
+    # kickc: the distribution zip lives behind a per-version GitLab release
+    # asset link — resolve it at fetch time instead of templating (spec §10).
+    SRC_URL=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - "$MANIFEST" "$VERSION" <<'PY'
+import sys, tomllib, urllib.parse, urllib.request
+from watch import release_asset_url
+manifest, version = sys.argv[1], sys.argv[2]
+t = tomllib.load(open(manifest, "rb"))
+up = t["upstream"]
+if up["type"] != "gitlab":
+    sys.exit(f"fetch-source: repackage mode only supports gitlab upstream (got {up['type']})")
+project = urllib.parse.quote(up["repo"], safe="")
+req = urllib.request.Request(
+    f"https://gitlab.com/api/v4/projects/{project}/releases",
+    headers={"User-Agent": "retropack-fetch"})
+releases = urllib.request.urlopen(req, timeout=30).read().decode()
+print(release_asset_url(releases, version, t["source"].get("release_asset", "Binary")))
+PY
+)
+  else
+    SRC_URL="$MANIFEST_URL"
+  fi
+fi
 
 SRC="${SRC:-$WORK/src}"
 mkdir -p "$WORK" "$SRC"
@@ -30,8 +59,12 @@ ARCHIVE="$WORK/src-archive"
 
 # HTTPS-only for the initial request and every redirect (spec §5's integrity
 # stance hardened against protocol-downgrade redirects); file:// stays
-# allowed for the local tests.
-curl -fsSL --proto '=https,file' --proto-redir '=https' -o "$ARCHIVE" "$SRC_URL"
+# allowed for the local tests. Capture the EFFECTIVE (post-redirect) URL —
+# package.sh cites it in the RETROPACK-NOTICE so provenance names the exact
+# file shipped (matters for repackage: shortener → stable wiki upload URL).
+EFFECTIVE=$(curl -fsSL --proto '=https,file' --proto-redir '=https' \
+  -w '%{url_effective}' -o "$ARCHIVE" "$SRC_URL")
+printf '%s\n' "$EFFECTIVE" > "$WORK/.source-url"
 
 # Detect format by magic bytes, not URL suffix: SourceForge download URLs end
 # in `/download`, not `.zip` (spec §10 tass64).

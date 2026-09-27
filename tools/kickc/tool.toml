@@ -1,9 +1,9 @@
 [tool]
 name         = "kickc"
 description  = "High-level C-like compiler for 6502/C64"
-homepage     = "https://kickc.jarl.dk"
+homepage     = "https://gitlab.com/camelot/kickc"
 license      = "MIT"
-license_files = ["LICENSE.md"]
+license_files = ["LICENSE.txt"]
 platform_independent = true
 runtime_requirements = ["java>=11"]
 
@@ -16,12 +16,18 @@ skip_versions = []
 max_per_run = 2
 
 [source]
+# Distribution zip: each GitLab release carries a "Binary" asset link (a
+# shortener → GitLab wiki upload, per-version URL) — fetch-source resolves it
+# at build time when build.mode = "repackage". This URL stays as the exact,
+# version-stable reference to the upstream SOURCE (used for the notice and as
+# a fallback).
 url = "https://gitlab.com/camelot/kickc/-/archive/{version}/kickc-{version}.tar.gz"
 strip_components = 1
+release_asset = "Binary"
 
 [build]
-mode = "source"
-alpine_packages = []
+mode = "repackage"                  # upstream ships a distribution zip per release (spec §10)
+alpine_packages = []                # noarch: runs directly on the runner, no container
 macos_packages  = []
 timeout_minutes = 30
 

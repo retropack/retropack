@@ -487,14 +487,16 @@ Inputs: `tool`, `version`. Jobs:
 
 ### kickc
 
-*   upstream: `gitlab`, `camelot/kickc`, `tag_regex = '^v?(?P<version>\d+\.\d+(?:\.\d+)?)$'` (verify), `min_version` = latest at implementation time.
+*   upstream: `gitlab`, `camelot/kickc`, `tag_regex = '^(?P<version>\d+\.\d+\.\d+)$'` (verified: tags are bare, e.g. `0.8.6`), `min_version = 0.8.6`.
     
-*   `platform_independent = true`, `runtime_requirements = ["java>=11"]`.
+*   `platform_independent = true`, `runtime_requirements = ["java>=11"]` (bytecode floor verified as Java 8 — multi-release jar module-info aside; 11 kept as a conservative claim).
     
-*   `build.mode = "repackage"` if the GitLab release carries a distribution zip (`kickc-{version}.zip` with `jar`, `lib/`, `include/`, `fragment/`); otherwise `mode = "source"` with `mvn -q package` (ubuntu-latest has JDK + maven via `apt`). Output layout: `bin/kickc` (our wrapper), `lib/kickc.jar` (+ dependency jars), `include/`, `lib/` (kickc's target libs), `fragment/`.
+*   `build.mode = "repackage"` — **verified**: every GitLab release carries a `Binary` asset link → shortener → stable GitLab wiki upload (`kickc_{version}.zip`), resolved at fetch time via the releases API (`source.release_asset = "Binary"`; the effective post-redirect URL is recorded for the notice). Zip root `kickc/` ships `bin/`, `jar/` (kickc jar + dependency jars), `include/`, `lib/`, `fragment/`, `target/`, `LICENSE.txt`, `NOTICE.txt` (+ examples and the manual PDF, which are not installed). Source-mode fallback exists (`mvn package`, pom targets Java 17) but is not the shipped path.
     
-*   test: `kickc -t c64 hello.c` in a temp dir (JRE available on all GitHub runners).
+*   output layout: `bin/kickc` = our POSIX-sh launcher (spec §7.2) reproducing upstream's **required** args `-F/-I/-L/-P` (verified: `KICKC_*` env alone is not read by the app — without `-P` the platform list is empty) + `jar/ fragment/ include/ lib/ target/` + upstream `NOTICE.txt`.
     
+*   test: `kickc -V` (version) and `kickc -p c64 hello.c` in a temp dir → non-empty `hello.asm` (platform flag is `-p`, **not** `-t`; JRE available on all GitHub runners).
+
 
 * * *
 
@@ -534,7 +536,7 @@ The App is installed org-wide, so no credential step.
 - [x] sdcc relocatable `include/lib` lookup; actual minimal Alpine package set; build time within budget. — **Resolved locally (linux-x86_64):** `bin/../share/sdcc` lookup proven by `test.sh` run from a temp dir; Alpine set = `build-base boost-dev boost-static bison flex zlib-dev zlib-static texinfo` (build green, well under the 90-minute budget); plus M1 fixes found en route: bundled sdbinutils needed `AM_LDFLAGS=-all-static` (libtool swallowed plain `-static`) and `lib/*.la` are removed post-install (absolute build paths, §6.4). CI-matrix run still pending.
 - [x] `docker run` availability/perf on `ubuntu-24.04-arm`. — **Resolved:** green runs 36310688371 + 36312373408; full fetch→build→test→portability→package within the job timeout.
 - [x] Actual tag/release schemes for oscar64 and kickc. — **Resolved:** oscar64 = `v`-prefixed tags (`v1.32.273`, built green); kickc = bare version tags (`0.8.6`) on GitLab releases.
-- [ ] Whether kickc GitLab releases carry a distribution zip (`build.mode = repackage` vs `source`) — deferred to M3; kickc is a stub until then.
+- [x] Whether kickc GitLab releases carry a distribution zip (`build.mode = repackage` vs `source`) — **resolved (M3):** yes — each release's `Binary` asset link → GitLab wiki upload `kickc_{version}.zip`; shipped as `mode = "repackage"`, resolved at fetch time (see §10 kickc).
 - [ ] SourceForge `best_release.json` + RSS give complete-enough version lists for backfill (else restrict `min_version` to current). — **Partially resolved:** `best_release.json` yields the latest fine (tass64 → 1.60.3243, sdcc → 4.6.0); `rss?path=/` returned no file titles for sdcc, so backfill *depth* stays unproven.
 - [ ] mise picks the identical-bytes noarch archives correctly on all three platforms. — still untested; needs the first `platform_independent` tool (kickc, M3).
 

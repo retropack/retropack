@@ -45,9 +45,17 @@ PY
 )
 
 # Generate RETROPACK-NOTICE from the template (spec §7.3).
-python3 - "$MANIFEST" "$VERSION" "$PLATFORM" "$REPO_ROOT/templates/RETROPACK-NOTICE.tmpl" "$DEST/RETROPACK-NOTICE" <<'PY'
+# Provenance URL: prefer the EFFECTIVE url recorded by fetch-source (exact
+# file shipped — matters for repackage mode's redirected asset links);
+# fall back to the manifest's version-templated URL.
+RECORDED_SOURCE_URL=""
+if [ -n "${WORK:-}" ] && [ -f "$WORK/.source-url" ]; then
+  RECORDED_SOURCE_URL="$(head -n1 "$WORK/.source-url")"
+fi
+python3 - "$MANIFEST" "$VERSION" "$PLATFORM" "$REPO_ROOT/templates/RETROPACK-NOTICE.tmpl" "$DEST/RETROPACK-NOTICE" "$RECORDED_SOURCE_URL" <<'PY'
 import os, sys, tomllib, datetime
 manifest, version, platform, tmpl_path, out_path = sys.argv[1:6]
+recorded = sys.argv[6] if len(sys.argv) > 6 else ""
 t = tomllib.load(open(manifest, "rb"))
 tool = t["tool"]
 up = t["upstream"]
@@ -57,11 +65,13 @@ notice = open(tmpl_path).read()
 # github:   .../archive/refs/tags/V2.19.tar.gz  → V2.19
 # gitlab:   .../-/archive/0.8.6/kickc-0.8.6.tar.gz → 0.8.6
 # sourceforge: no tag — the release filename IS the source identity.
-source_url = t["source"]["url"].replace("{version}", version)
-if "/refs/tags/" in source_url:
-    source_tag = source_url.split("/refs/tags/", 1)[1].removesuffix(".tar.gz")
-elif "/-/archive/" in source_url:
-    source_tag = source_url.split("/-/archive/", 1)[1].split("/", 1)[0]
+manifest_url = t["source"]["url"].replace("{version}", version)
+source_url = recorded or manifest_url
+source_ref = manifest_url
+if "/refs/tags/" in source_ref:
+    source_tag = source_ref.split("/refs/tags/", 1)[1].removesuffix(".tar.gz")
+elif "/-/archive/" in source_ref:
+    source_tag = source_ref.split("/-/archive/", 1)[1].split("/", 1)[0]
 else:
     # SourceForge /download URLs: filename before the trailing /download
     parts = source_url.rstrip("/").split("/")
