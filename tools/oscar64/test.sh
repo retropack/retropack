@@ -22,6 +22,8 @@ cd "$TMP"
 cp "$FIXTURES/hello.c" .
 "$BIN/oscar64" hello.c || fail "oscar64 hello.c failed"
 PRG="$(find . -name '*.prg' | head -n1)"
-[ -n "$PRG" ] && [ -s "$PRG" ] || fail "no non-empty .prg produced"
+if [ -z "$PRG" ] || [ ! -s "$PRG" ]; then
+  fail "no non-empty .prg produced"
+fi
 
 echo "test.sh(oscar64): OK"

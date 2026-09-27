@@ -16,6 +16,8 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 "$BIN/kickc" -t c64 "$FIXTURES/hello.c" || fail "kickc hello.c failed"
 PRG="$(find . \( -name '*.prg' -o -name '*.bin' \) | head -n1)"
-[ -n "$PRG" ] && [ -s "$PRG" ] || fail "no non-empty output produced"
+if [ -z "$PRG" ] || [ ! -s "$PRG" ]; then
+  fail "no non-empty output produced"
+fi
 
 echo "test.sh(kickc): OK"
