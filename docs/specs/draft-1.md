@@ -538,7 +538,7 @@ The App is installed org-wide, so no credential step.
 - [x] Actual tag/release schemes for oscar64 and kickc. — **Resolved:** oscar64 = `v`-prefixed tags (`v1.32.273`, built green); kickc = bare version tags (`0.8.6`) on GitLab releases.
 - [x] Whether kickc GitLab releases carry a distribution zip (`build.mode = repackage` vs `source`) — **resolved (M3):** yes — each release's `Binary` asset link → GitLab wiki upload `kickc_{version}.zip`; shipped as `mode = "repackage"`, resolved at fetch time (see §10 kickc).
 - [ ] SourceForge `best_release.json` + RSS give complete-enough version lists for backfill (else restrict `min_version` to current). — **Partially resolved:** `best_release.json` yields the latest fine (tass64 → 1.60.3243, sdcc → 4.6.0); `rss?path=/` returned no file titles for sdcc, so backfill *depth* stays unproven.
-- [ ] mise picks the identical-bytes noarch archives correctly on all three platforms. — still untested; needs the first `platform_independent` tool (kickc, M3).
+- [x] mise picks the identical-bytes noarch archives correctly on all three platforms. — **Resolved (M3):** kickc 0.8.6 fan-out published three platform assets with byte-identical sha256 (`d6a42072…`); `accept` green on ubuntu-latest, ubuntu-24.04-arm and macos-latest (each installed its own platform-named copy and passed `test.sh`).
 
 * * *
 
