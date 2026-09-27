@@ -15,8 +15,19 @@ MANIFEST="$REPO_ROOT/tools/$TOOL/tool.toml"
 DIST="${DIST:-$REPO_ROOT/dist}"
 mkdir -p "$DIST"
 
-# PREFIX is already <work>/<tool>-<version>/; tar runs from its parent below.
+# PREFIX is <work>/<tool>-<version>/ — but it may be owned by the build
+# container's root (CI runners use rootful docker; local rootless docker
+# maps root to the invoking user, which is why this only bit in CI). Stage a
+# writable copy before adding the licence/notice files so packaging never
+# depends on who ran the build.
 [ -d "$PREFIX" ] || { echo "package: PREFIX $PREFIX does not exist" >&2; exit 1; }
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+BASE=$(basename "$PREFIX")
+cp -r "$PREFIX" "$STAGE/$BASE"
+DEST="$STAGE/$BASE"
+# The copy inherits the source's mode (e.g. 555) — make our own copy writable.
+chmod u+w "$DEST"
 
 # Copy upstream licence files (paths relative to source tree) into the prefix.
 # Spec §2.1/§7.2: every archive ships the upstream LICENSE — a missing one is a
@@ -24,7 +35,7 @@ mkdir -p "$DIST"
 [ -n "${SRC:-}" ] || { echo "package: SRC must be set to locate licence files" >&2; exit 1; }
 while IFS= read -r lic; do
   [ -f "$SRC/$lic" ] || { echo "package: licence file $lic not found in SRC — refusing to ship without it" >&2; exit 1; }
-  cp "$SRC/$lic" "$PREFIX/"
+  cp "$SRC/$lic" "$DEST/"
 done < <(python3 - "$MANIFEST" <<'PY'
 import tomllib, sys
 t = tomllib.load(open(sys.argv[1], "rb"))
@@ -34,7 +45,7 @@ PY
 )
 
 # Generate RETROPACK-NOTICE from the template (spec §7.3).
-python3 - "$MANIFEST" "$VERSION" "$PLATFORM" "$REPO_ROOT/templates/RETROPACK-NOTICE.tmpl" "$PREFIX/RETROPACK-NOTICE" <<'PY'
+python3 - "$MANIFEST" "$VERSION" "$PLATFORM" "$REPO_ROOT/templates/RETROPACK-NOTICE.tmpl" "$DEST/RETROPACK-NOTICE" <<'PY'
 import os, sys, tomllib, datetime
 manifest, version, platform, tmpl_path, out_path = sys.argv[1:6]
 t = tomllib.load(open(manifest, "rb"))
@@ -85,6 +96,6 @@ for field, value in {
 open(out_path, "w").write(notice)
 PY
 
-# tar from the parent so the archive has exactly one top-level directory.
-tar -C "$(dirname "$PREFIX")" -czf "$DIST/$TOOL-$VERSION-$PLATFORM.tar.gz" "$(basename "$PREFIX")"
+# Exactly one top-level directory → mise auto-applies strip_components=1 (§7.2).
+tar -C "$STAGE" -czf "$DIST/$TOOL-$VERSION-$PLATFORM.tar.gz" "$BASE"
 echo "package: dist/$TOOL-$VERSION-$PLATFORM.tar.gz"
