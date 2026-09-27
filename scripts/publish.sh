@@ -131,15 +131,31 @@ release() {
     return 1
   fi
 
-  # --latest only when this is the highest published version — backfilling
-  # older versions must not steal "latest" (spec §7.4 step 6). Comparison
-  # reuses watch.py's lenient version compare (single source of truth).
-  local latest
-  latest=$(gh api "repos/$repo/releases?per_page=100" |
+  # spec §7.4 step 6: backfills must not steal "latest". Two live-verified
+  # API facts (run 36344364173 + follow-ups): make_latest is a STRING enum
+  # (true|false|legacy) — boolean `-F` is silently ignored; and `false` only
+  # UNMARKS, where the default fallback is "newest created" — always the
+  # backfill itself — so the true highest must be explicitly pinned `true`.
+  # Comparison reuses watch.py's lenient compare (single source of truth).
+  local releases_json latest highest_id
+  releases_json=$(gh api "repos/$repo/releases?per_page=100")
+  latest=$(printf '%s' "$releases_json" | \
     python3 "$REPO_ROOT/scripts/watch.py" --latest-flag "$VERSION")
-  gh api -X PATCH "repos/$repo/releases/$draft_id" \
-    -F draft=false -F "latest=$latest" > /dev/null
-  echo "publish: $tag published (latest=$latest)"
+  highest_id=$(printf '%s' "$releases_json" | \
+    python3 "$REPO_ROOT/scripts/watch.py" --highest-id)
+  if [ "$latest" = "true" ]; then
+    gh api -X PATCH "repos/$repo/releases/$draft_id" \
+      -f draft=false -f make_latest=true > /dev/null
+    echo "publish: $tag published (latest=true)"
+  else
+    gh api -X PATCH "repos/$repo/releases/$draft_id" \
+      -f draft=false -f make_latest=false > /dev/null
+    if [ -n "$highest_id" ] && [ "$highest_id" != "$draft_id" ]; then
+      gh api -X PATCH "repos/$repo/releases/$highest_id" \
+        -f make_latest=true > /dev/null
+    fi
+    echo "publish: $tag published (latest=false; highest pinned: id=$highest_id)"
+  fi
 }
 
 case "$phase" in

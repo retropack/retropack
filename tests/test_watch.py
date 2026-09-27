@@ -56,6 +56,22 @@ def test_latest_flag_only_highest_wins():
     releases.append({"tag_name": "v5.0.0", "draft": False, "prerelease": True})
     assert watch.latest_flag("4.6.0", releases) == "true"
 
+def test_highest_release_id_picks_id_of_top_published():
+    import json as _json
+    doc = _json.dumps([
+        {"id": 397780317, "tag_name": "v1.57.2900", "draft": False, "prerelease": False},
+        {"id": 397659279, "tag_name": "v1.60.3243", "draft": False, "prerelease": False},
+        {"id": 111, "tag_name": "v9.9.9", "draft": True, "prerelease": False},
+        {"id": 222, "tag_name": "v8.8.8", "draft": False, "prerelease": True},
+        {"id": 333, "tag_name": "v1.59.3120", "draft": False, "prerelease": False},
+    ])
+    # highest PUBLISHED version is 1.60.3243 — NOT the newest-created 1.57,
+    # not the draft, not the prerelease
+    assert watch.highest_release_id(doc) == "397659279"
+    assert watch.highest_release_id("[]") == ""
+    assert watch.highest_release_id(
+        _json.dumps([{"id": 5, "tag_name": "v2.0", "draft": True}])) == ""
+
 def test_release_asset_url_selects_tag_and_link():
     import json as _json
     doc = _json.dumps([

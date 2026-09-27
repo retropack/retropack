@@ -89,6 +89,25 @@ def latest_flag(version: str, releases: list[dict]) -> str:
     return "true" if highest else "false"
 
 
+def highest_release_id(releases_json: str) -> str:
+    """id of the highest PUBLISHED release (drafts/prereleases excluded),
+    empty when none. Needed because GitHub's `make_latest=false` only
+    UNMARKS: an unmarked release then falls back to the default (newest
+    created) — which for a backfill is always the backfill itself — so the
+    true highest must be explicitly pinned `true` (verified live on
+    retropack/tass64).
+    """
+    data = json.loads(releases_json) if isinstance(releases_json, str) else releases_json
+    published = [r for r in data
+                 if not r.get("draft") and not r.get("prerelease", False)
+                 and r.get("tag_name", "").startswith("v")]
+    if not published:
+        return ""
+    best = max(published, key=cmp_to_key(
+        lambda a, b: compare_versions(a["tag_name"][1:], b["tag_name"][1:])))
+    return str(best.get("id", ""))
+
+
 def release_asset_url(releases_json: str, tag: str, link_name: str) -> str:
     """Pick a named asset link's URL for `tag` from a GitLab releases JSON
     document (kickc's distribution zip lives behind a release asset link).
@@ -196,9 +215,15 @@ def main(argv: list[str]) -> int:
     p.add_argument("--latest-flag", metavar="VERSION",
                    help="read a releases JSON array on stdin; print true if "
                         "VERSION is the highest published release (spec §7.4)")
+    p.add_argument("--highest-id", action="store_true",
+                   help="read a releases JSON array on stdin; print the id of "
+                        "the highest published release (empty if none)")
     p.add_argument("--detect", action="store_true",
                    help="print pending {tool: [versions]} JSON (spec §8.1) and exit")
     args = p.parse_args(argv)
+    if args.highest_id:
+        print(highest_release_id(json.load(sys.stdin)))
+        return 0
     if args.detect:
         try:
             pending = detect(args.tool, args.version)

@@ -98,3 +98,60 @@ def test_upload_and_release_reject_malformed_version_before_any_gh_call(tmp_path
                            capture_output=True, text=True)
         assert r.returncode == 1, f"{phase}: rc={r.returncode}, stderr={r.stderr}"
         assert "invalid version" in r.stderr, r.stderr
+
+def test_release_patches_make_latest_not_latest(tmp_path):
+    # Live E2E (run 36344364173) proved the wire bug: the Update-a-release API
+    # field is `make_latest` — our `latest=` was accepted and silently IGNORED,
+    # so a backfilled release stole the Latest badge. Fake-gh harness pins the
+    # actual PATCH body and the draft-id/latest logic end to end.
+    import os, stat, textwrap
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "gh.log"
+    canned = tmp_path / "releases.json"
+    canned.write_text(__import__("json").dumps([
+        {"id": 42, "tag_name": "v1.57.2900", "draft": True, "prerelease": False},
+        {"id": 7, "tag_name": "v1.60.3243", "draft": False, "prerelease": False},
+        {"id": 8, "tag_name": "v1.59.3120", "draft": False, "prerelease": False},
+        {"id": 9, "tag_name": "v1.58.2974", "draft": False, "prerelease": False},
+    ]))
+    fake = bindir / "gh"
+    fake.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        printf '%s\n' "$*" >> {log}
+        case "$*" in
+          *PATCH*) exit 0 ;;
+          *"releases?per_page=100"*--jq*) printf '42\tv1.57.2900\ttrue\n7\tv1.60.3243\tfalse\n8\tv1.59.3120\tfalse\n9\tv1.58.2974\tfalse\n' ;;
+          *"releases?per_page=100"*) cat {canned}; exit 0 ;;
+          *"release view"*) exit 1 ;;
+          *) exit 0 ;;
+        esac
+        """))
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    # bash + the tools publish.sh/fake-gh need. python3 → sys.executable:
+    # PATH's python3 is a mise shim, and the sandbox HOME would break it.
+    # (dirname's failure alone is non-fatal — pwd masks it — but python3/awk/
+    # cat are load-bearing.)
+    import shutil, sys
+    for tool in ("bash", "grep", "dirname", "awk", "cat"):
+        (bindir / tool).symlink_to(shutil.which(tool))
+    (bindir / "python3").symlink_to(sys.executable)
+    env = {"PATH": str(bindir), "GITHUB_REPOSITORY": "retropack/tass64",
+           "VERSION": "1.57.2900", "GH_TOKEN": "x",
+           "DIST": str(tmp_path / "dist"), "HOME": str(tmp_path)}
+    r = subprocess.run(["bash", str(SCRIPT), "release"], env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    # draft 42 found and unpublished…
+    assert "/releases/42" in calls, calls
+    # …as a string-typed make_latest (boolean false is silently ignored —
+    # live-verified on retropack/tass64), NOT the -F boolean form…
+    assert "make_latest=false" in calls, f"wrong PATCH body:\n{calls}"
+    assert "-F make_latest" not in calls, f"boolean make_latest ignored by API:\n{calls}"
+    assert "-F latest=" not in calls, f"legacy ignored param sent:\n{calls}"
+    # …and because an unmarked release falls back to "newest created" (always
+    # the backfill), the true highest must be explicitly pinned: id 7 =
+    # v1.60.3243 in the canned fixture.
+    assert "/releases/7" in calls, f"highest not pinned:\n{calls}"
+    assert "make_latest=true" in calls, f"highest not marked latest:\n{calls}"
