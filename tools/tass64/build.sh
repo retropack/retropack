@@ -8,5 +8,8 @@ set -euo pipefail
 
 cd "$SRC"
 make -j"$NPROC" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
-install -Dm755 64tass "$PREFIX/bin/64tass"
-install -Dm644 README "$PREFIX/"
+# mkdir -p, not install -D: BSD/macOS install has no -D (create-dirs), so
+# this would die with a temp-file ENOENT on the macOS runner (first CI leg).
+mkdir -p "$PREFIX/bin"
+install -m755 64tass "$PREFIX/bin/64tass"
+install -m644 README "$PREFIX/"
