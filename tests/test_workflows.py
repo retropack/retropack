@@ -95,6 +95,13 @@ def test_build_yml_pipeline_steps_present():
     assert up, "build job must upload artifacts"
     assert "dist-" in up[0]["with"]["name"]              # §9.2.2 dist-<platform>
     assert int(up[0]["with"]["retention-days"]) <= 7      # releases are the durable store
+    # §6.1 env contract: build.sh runs under set -u and reads CFLAGS/LDFLAGS
+    # even on paths where no wrapper sets them (macos, noarch) — default them.
+    assert "LDFLAGS" in b and "CFLAGS" in b
+    # Platforms are independent — one failure must not cancel the other legs,
+    # or a red run tells you nothing about the remaining platforms.
+    assert build["jobs"]["build"]["strategy"].get("fail-fast") is False
+    assert build["jobs"]["accept"]["strategy"].get("fail-fast") is False
 
 def test_build_yml_publish_job_flow():
     # §9.2.3: download → assets (fan-out + checksums) → attest → upload → release.
@@ -125,3 +132,6 @@ def test_build_yml_on_failure_opens_issue():
     runs = _runs(f)
     for frag in ("build-failure", "gh issue", "build failure:", "acceptance failure:"):
         assert frag in runs, f"on-failure missing: {frag}"
+    # No checkout in this job — gh must get the repo explicitly, it cannot
+    # infer it from a git remote (first real run died on "not a git repository").
+    assert runs.count("--repo \"$GITHUB_REPOSITORY\"") >= 2

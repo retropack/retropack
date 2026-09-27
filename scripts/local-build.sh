@@ -57,7 +57,7 @@ export NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 # Platform build presets (spec §6.2); build-macos.sh sets its own clang presets.
 case "$PLATFORM" in
   linux-*) export CC=gcc CXX=g++ CFLAGS=-O2 LDFLAGS=-static ;;
-  noarch)  export CFLAGS="${CFLAGS:--O2}" ;;
+  noarch)  export CFLAGS="${CFLAGS:--O2}" LDFLAGS="${LDFLAGS:-}" ;;
 esac
 
 # macOS build-time deps are the caller's job (spec §6.2) — remind, don't brew.

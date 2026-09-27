@@ -13,6 +13,9 @@ NPROC="${NPROC:-$(sysctl -n hw.ncpu)}"
 export CC=clang CXX=clang++
 export MACOSX_DEPLOYMENT_TARGET=12.0
 export CFLAGS="-O2"
+# §6.1 env contract: build.sh reads $LDFLAGS under set -u — macOS has no
+# static-link preset (spec §6.2), so default it to empty but always defined.
+export LDFLAGS="${LDFLAGS:-}"
 export NPROC
 
 sh "$REPO_ROOT/tools/$TOOL/build.sh"

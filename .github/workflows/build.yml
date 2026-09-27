@@ -96,6 +96,9 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
     strategy:
+      # Platforms are independent — never cancel siblings; a red run must
+      # still report what the other platforms did.
+      fail-fast: false
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
@@ -127,6 +130,10 @@ jobs:
           fi
           export OS ARCH
           export NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
+          # §6.1 contract: build.sh reads these under set -u; wrappers set
+          # their own platform presets — default whatever is left over.
+          export CFLAGS="${CFLAGS:--O2}"
+          export LDFLAGS="${LDFLAGS:-}"
           if [ "$PLATFORM" = "macos-aarch64" ]; then
             pkgs=$(python3 -c "
           import tomllib
@@ -206,6 +213,7 @@ jobs:
     needs: [prepare, publish]
     if: needs.prepare.outputs.skip != 'true' && inputs.publish != false
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.runner }}
@@ -259,7 +267,7 @@ jobs:
           # — same build-failure label either way, so the watcher still
           # blocks retries while a human sees which stage broke.
           title="$TITLE_KIND: $TOOL $VERSION"
-          gh label create build-failure \
+          gh label create build-failure --repo "$GITHUB_REPOSITORY" \
             --description "build broke; watcher blocks re-runs until closed (spec 8.1)" \
             --force
           body="Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"$'\n''Job results: '"$RESULTS"
@@ -269,5 +277,6 @@ jobs:
             gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$existing/comments" \
               -f body="$body" > /dev/null
           else
-            gh issue create --title "$title" --label build-failure --body "$body"
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --label build-failure --body "$body"
           fi
