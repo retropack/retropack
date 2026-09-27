@@ -5,11 +5,16 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false     # PR code runs here (pytest); no token in .git
 
       # Lint tools come from mise.toml (hk, shellcheck, yamllint, actionlint)
       # — identical versions locally and in CI, independent of whatever the

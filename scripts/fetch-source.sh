@@ -28,7 +28,10 @@ SRC="${SRC:-$WORK/src}"
 mkdir -p "$WORK" "$SRC"
 ARCHIVE="$WORK/src-archive"
 
-curl -fsSL -o "$ARCHIVE" "$SRC_URL"
+# HTTPS-only for the initial request and every redirect (spec §5's integrity
+# stance hardened against protocol-downgrade redirects); file:// stays
+# allowed for the local tests.
+curl -fsSL --proto '=https,file' --proto-redir '=https' -o "$ARCHIVE" "$SRC_URL"
 
 # Detect format by magic bytes, not URL suffix: SourceForge download URLs end
 # in `/download`, not `.zip` (spec §10 tass64).

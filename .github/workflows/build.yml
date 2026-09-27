@@ -16,6 +16,15 @@ on:
         description: "upstream version, e.g. 2.19"
         required: true
         type: string
+      # Separate flag per trigger: tool-repo calls default to publish (the
+      # spec path), direct brain dispatches default to build-only so a dev
+      # run can never create releases. A missing input must never be
+      # trigger-dependent (security review P1).
+      publish:
+        description: "run publish + accept after the build"
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       tool:
@@ -32,15 +41,13 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write        # create release, tags
-  id-token: write        # attestation signing
-  attestations: write
-  issues: write          # build-failure issues
-
+# No workflow-level permissions (security review P1): every job declares its
+# own — the build job executes upstream-controlled code and must be read-only.
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       skip: ${{ steps.idem.outputs.skip }}
       platform_independent: ${{ steps.manifest.outputs.platform_independent }}
@@ -52,6 +59,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
+          persist-credentials: false
+
+      # Format validation at the trust boundary (security review): tool and
+      # version arrive as free-form workflow_dispatch strings and later feed
+      # API paths, jq/awk data and release ids.
+      - name: validate inputs
+        env:
+          TOOL: ${{ inputs.tool }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! printf '%s\n' "$TOOL" | grep -Eq '^[a-z0-9-]+$'; then
+            echo "invalid tool name: $TOOL" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
+            echo "invalid version: $VERSION" >&2
+            exit 1
+          fi
 
       # Parse tools/<tool>/tool.toml → job outputs (spec §9.2.1).
       - id: manifest
@@ -79,13 +104,16 @@ jobs:
 
       # Idempotency (spec §9.2.1): published release exists → skip downstream.
       # Query the releases LIST, not /releases/tags: drafts have no tag ref.
+      # The jq program stays constant — VERSION enters as awk data, never as
+      # part of the program text (security review: jq injection).
       - id: idem
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           count=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq "[.[] | select(.tag_name == \"v$VERSION\" and .draft == false)] | length")
+            --jq '.[] | "\(.tag_name)\t\(.draft)"' \
+            | awk -F'\t' -v t="v$VERSION" '$1 == t && $2 == "false"' | wc -l)
           if [ "$count" -gt 0 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -95,6 +123,8 @@ jobs:
   build:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
+    permissions:
+      contents: read
     strategy:
       # Platforms are independent — never cancel siblings; a red run must
       # still report what the other platforms did.
@@ -114,6 +144,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
+          # Upstream build code runs in this workspace (and inside docker —
+          # build-linux.sh mounts it): a persisted credential would be
+          # readable by whatever the upstream makefiles execute (P1).
+          persist-credentials: false
 
       - name: fetch source
         run: scripts/fetch-source.sh
@@ -173,6 +207,10 @@ jobs:
     needs: [prepare, build]
     if: needs.prepare.outputs.skip != 'true' && inputs.publish != false
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create release, tags
+      id-token: write        # attestation signing
+      attestations: write
     env:
       TOOL: ${{ inputs.tool }}
       VERSION: ${{ inputs.version }}
@@ -182,6 +220,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
+          persist-credentials: false
 
       - uses: actions/download-artifact@v8
         with:
@@ -212,6 +251,8 @@ jobs:
   accept:
     needs: [prepare, publish]
     if: needs.prepare.outputs.skip != 'true' && inputs.publish != false
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -224,6 +265,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
+          persist-credentials: false
 
       # Spec §9.2.4: prove autodetection, attestation verification and the
       # archive layout by installing exactly what a user would.
@@ -233,7 +275,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: acceptance install via mise
-        run: MISE_GITHUB_TOKEN="${{ github.token }}" mise install "github:${GITHUB_REPOSITORY}@${VERSION}"
+        env:
+          MISE_GITHUB_TOKEN: ${{ github.token }}
+        run: mise install "github:${GITHUB_REPOSITORY}@${VERSION}"
 
       - name: acceptance test
         run: |
@@ -271,8 +315,10 @@ jobs:
             --description "build broke; watcher blocks re-runs until closed (spec 8.1)" \
             --force
           body="Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"$'\n''Job results: '"$RESULTS"
+          # Constant jq program; the title enters as awk data (security review).
           existing=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=build-failure&state=open" \
-            --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+            --jq '.[] | "\(.number)\t\(.title)"' \
+            | awk -F'\t' -v t="$title" '$2 == t { print $1; exit }')
           if [ -n "$existing" ]; then
             gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$existing/comments" \
               -f body="$body" > /dev/null

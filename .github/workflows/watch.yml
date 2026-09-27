@@ -21,13 +21,14 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   detect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -36,12 +37,18 @@ jobs:
       # M1: watch.py fetches upstream versions, diffs against published
       # releases and open build-failure issues, then repository_dispatches
       # retropack/<tool> (spec §8.1).
+      # Inputs arrive via env, never interpolated into the script text —
+      # ${{ }} inside run: is shell injection (security review).
       - name: detect missing (tool, version) pairs
+        env:
+          IN_TOOL: ${{ inputs.tool }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set --
-          [ -n "${{ inputs.tool }}" ] && set -- "$@" --tool "${{ inputs.tool }}"
-          [ -n "${{ inputs.version }}" ] && set -- "$@" --version "${{ inputs.version }}"
-          [ "${{ inputs.dry_run }}" = "true" ] && set -- "$@" --dry-run
+          [ -n "$IN_TOOL" ] && set -- "$@" --tool "$IN_TOOL"
+          [ -n "$IN_VERSION" ] && set -- "$@" --version "$IN_VERSION"
+          [ "$IN_DRY_RUN" = "true" ] && set -- "$@" --dry-run
           python3 scripts/watch.py "$@"
 
   # Re-enable the workflow as the last step of every run — resets GitHub's
@@ -50,6 +57,8 @@ jobs:
     if: always()
     needs: detect
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
       - run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/enable"
         env:

@@ -17,6 +17,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="${DIST:-$REPO_ROOT/dist}"
 phase="${1:-}"
 
+# VERSION feeds API paths, release ids and the --latest decision — accept only
+# normalized numeric-dotted versions (spec §5) before anything consumes it
+# (security review: crafted versions steered jq/release lookups).
+validate_version() {
+  if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
+    echo "publish: invalid version '$VERSION'" >&2
+    exit 1
+  fi
+}
+
 assets() {
   # noarch fan-out: the same bytes published under all three platform names
   # so mise autodetection always finds a match (spec §7.1 — the -noarch name
@@ -56,13 +66,17 @@ assets() {
 
 draft_id_for() {
   # Drafts have no tag ref yet, so query the releases LIST (spec §7.4 step 2).
+  # Constant jq program; the tag is passed to awk as data, never interpolated
+  # into the program text (security review: jq injection → wrong release id).
   gh api "repos/$1/releases?per_page=100" \
-    --jq "[.[] | select(.draft == true and .tag_name == \"$2\")] | .[0].id // empty"
+    --jq '.[] | "\(.id)\t\(.tag_name)\t\(.draft)"' \
+    | awk -F'\t' -v t="$2" '$2 == t && $3 == "true" { print $1; exit }'
 }
 
 upload() {
   : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
   : "${VERSION:?VERSION must be set}"
+  validate_version
   local repo="$GITHUB_REPOSITORY" tag="v$VERSION"
 
   # 1. Already published → nothing to do (idempotent).
@@ -104,6 +118,7 @@ upload() {
 release() {
   : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
   : "${VERSION:?VERSION must be set}"
+  validate_version
   local repo="$GITHUB_REPOSITORY" tag="v$VERSION"
 
   local draft_id
