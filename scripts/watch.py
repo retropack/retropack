@@ -77,6 +77,18 @@ def select_pending(upstream: list[str], released: list[str], blocked: list[str],
     return pending[:max_per_run]
 
 
+def latest_flag(version: str, releases: list[dict]) -> str:
+    """"true"/"false": is `version` the highest PUBLISHED release? (spec §7.4
+    step 6 — backfilling older versions must not steal "latest").
+    """
+    published = [r["tag_name"][1:] for r in releases
+                 if not r.get("draft") and not r.get("prerelease", False)
+                 and r["tag_name"].startswith("v")]
+    highest = all(compare_versions(version, v) >= 0
+                  for v in published if v != version)
+    return "true" if highest else "false"
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="watch.py", description="detect missing (tool, version) pairs")
     p.add_argument("--tool", help="limit to one tool")
@@ -84,7 +96,13 @@ def main(argv: list[str]) -> int:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--latest-for", metavar="TOOL",
                    help="print the newest matching upstream version and exit")
+    p.add_argument("--latest-flag", metavar="VERSION",
+                   help="read a releases JSON array on stdin; print true if "
+                        "VERSION is the highest published release (spec §7.4)")
     args = p.parse_args(argv)
+    if args.latest_flag:
+        print(latest_flag(args.latest_flag, json.load(sys.stdin)))
+        return 0
     if args.latest_for:
         try:
             v = latest_version(args.latest_for)

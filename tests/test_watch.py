@@ -44,6 +44,18 @@ def test_select_pending_dedupes_equivalent_versions():
 def test_main_stub_returns_zero():
     assert watch.main(["--dry-run"]) == 0
 
+def test_latest_flag_only_highest_wins():
+    releases = [
+        {"tag_name": "v4.6.0", "draft": False, "prerelease": False},
+        {"tag_name": "v2.19", "draft": False, "prerelease": False},
+        {"tag_name": "v9.9.9", "draft": True, "prerelease": False},   # drafts don't count
+    ]
+    assert watch.latest_flag("4.6.0", releases) == "true"    # highest published
+    assert watch.latest_flag("2.19", releases) == "false"    # backfill must not steal latest (§7.4)
+    # prereleases never count toward "highest"
+    releases.append({"tag_name": "v5.0.0", "draft": False, "prerelease": True})
+    assert watch.latest_flag("4.6.0", releases) == "true"
+
 # --- latest-version resolution (local-build default) ---
 
 def test_pick_latest_respects_min_and_skip():

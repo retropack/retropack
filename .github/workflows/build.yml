@@ -1,7 +1,9 @@
 name: build
 
-# Reusable build/test/publish pipeline (spec §9.2), triggered by each tool
-# repo's release.yml stub via repository_dispatch → workflow_dispatch chain.
+# Reusable build/test/publish pipeline (spec §9.2). Primary trigger is the
+# tool repos' release.yml stub (workflow_call); workflow_dispatch lets a
+# maintainer run it straight from the brain — publish+accept default OFF
+# there so a direct run can never create releases by accident.
 
 on:
   workflow_call:
@@ -14,6 +16,21 @@ on:
         description: "upstream version, e.g. 2.19"
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: "tool name, e.g. cc65"
+        required: true
+        type: string
+      version:
+        description: "upstream version, e.g. 2.19"
+        required: true
+        type: string
+      publish:
+        description: "also run publish + accept (requires release rights in this repo)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write        # create release, tags
@@ -60,10 +77,20 @@ jobs:
           print(f"timeout={t['build'].get('timeout_minutes', 60)}")
           PY
 
-      # Idempotency (spec §9.2.1): if published release v<version> exists →
-      # skip=true and all later jobs short-circuit. Needs the GitHub API (M1).
+      # Idempotency (spec §9.2.1): published release exists → skip downstream.
+      # Query the releases LIST, not /releases/tags: drafts have no tag ref.
       - id: idem
-        run: echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq "[.[] | select(.tag_name == \"v$VERSION\" and .draft == false)] | length")
+          if [ "$count" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: prepare
@@ -73,44 +100,138 @@ jobs:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.timeout) }}
+    env:
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
+      PLATFORM: ${{ matrix.platform }}
+      WORK: ${{ github.workspace }}/work
+      SRC: ${{ github.workspace }}/work/src
+      PREFIX: ${{ github.workspace }}/work/${{ inputs.tool }}-${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
-      # M1 (§9.2.2): scripts/fetch-source.sh → build-linux.sh / build-macos.sh
-      # → tools/<tool>/test.sh ($PREFIX) → check-portability.sh → package.sh →
-      # upload artifact dist-<platform>.
-      - run: echo "TODO fetch, build, test, portability, package (M1)"
-        env:
-          PLATFORM: ${{ matrix.platform }}
+
+      - name: fetch source
+        run: scripts/fetch-source.sh
+
+      # The same case-dispatch scripts/local-build.sh runs locally (spec §6.2):
+      # linux → docker/alpine wrapper, macos → native wrapper, noarch → direct.
+      - name: build
+        run: |
+          OS=${PLATFORM%%-*}
+          ARCH=${PLATFORM#*-}
+          if [ "$PLATFORM" = "noarch" ]; then
+            OS=noarch
+            ARCH=noarch
+          fi
+          export OS ARCH
+          export NPROC="${NPROC:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
+          if [ "$PLATFORM" = "macos-aarch64" ]; then
+            pkgs=$(python3 -c "
+          import tomllib
+          t = tomllib.load(open('tools/$TOOL/tool.toml', 'rb'))
+          print(' '.join(t['build'].get('macos_packages', [])))
+          ")
+            if [ -n "$pkgs" ]; then
+              read -r -a brew_pkgs <<< "$pkgs"
+              brew install "${brew_pkgs[@]}"
+            fi
+          fi
+          case "$PLATFORM" in
+            linux-*) scripts/build-linux.sh ;;
+            macos-*) scripts/build-macos.sh ;;
+            noarch)  sh "tools/$TOOL/build.sh" ;;
+            *) echo "unknown platform: $PLATFORM" >&2; exit 1 ;;
+          esac
+
+      - name: test
+        run: '"tools/$TOOL/test.sh"'
+
+      - name: portability
+        run: scripts/check-portability.sh
+
+      - name: package
+        run: scripts/package.sh
+
+      # Releases are the durable store — keep workflow artifacts short-lived
+      # so they can't eat the free plan's 500 MB shared artifact allowance.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform }}
+          path: ${{ github.workspace }}/dist/*
+          retention-days: 7
 
   publish:
     needs: [prepare, build]
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && inputs.publish != false
     runs-on: ubuntu-latest
+    env:
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
+      PLATFORM_INDEPENDENT: ${{ needs.prepare.outputs.platform_independent }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
-      # M1 (§9.2.3): download artifacts, fan noarch out to 3 platform names
-      # (inputs.platform_independent / matrix), SHA256SUMS + .sha256,
-      # scripts/publish.sh (draft → assets → attest → undraft, spec §7.4).
-      - run: echo "TODO checksums, publish.sh, attest (M1)"
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      # noarch fan-out + SHA256SUMS + per-asset .sha256 (spec §7.1).
+      - name: prepare assets
+        run: scripts/publish.sh assets
+
+      # Attest the local files BEFORE the release becomes visible — users can
+      # never observe unattested assets (spec §7.4 ordering intent).
+      - name: attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.tar.gz
+
+      # Spec §7.4 steps 1–4: published short-circuit, delete stale draft,
+      # create draft targeting main, upload all assets.
+      - name: upload release assets
+        run: scripts/publish.sh upload
+
+      # Spec §7.4 step 6: undraft, --latest only if this is the highest version.
+      - name: publish release
+        run: scripts/publish.sh release
 
   accept:
     needs: [prepare, publish]
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && inputs.publish != false
     strategy:
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.runner }}
+    env:
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: retropack/retropack
-      # M1 (§9.2.4): install mise, mise install github:retropack/<tool>@<version>,
-      # run tools/<tool>/test.sh with PREFIX=$(mise where …).
-      - run: echo "TODO mise acceptance install + test.sh (M1)"
+
+      # Spec §9.2.4: prove autodetection, attestation verification and the
+      # archive layout by installing exactly what a user would.
+      - name: install mise
+        run: |
+          curl -fsSL https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: acceptance install via mise
+        run: MISE_GITHUB_TOKEN="${{ github.token }}" mise install "github:${GITHUB_REPOSITORY}@${VERSION}"
+
+      - name: acceptance test
+        run: |
+          prefix=$(mise where "github:${GITHUB_REPOSITORY}@${VERSION}")
+          export PREFIX="$prefix"
+          "tools/$TOOL/test.sh"
 
   on-failure:
     if: failure()
@@ -118,7 +239,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TOOL: ${{ inputs.tool }}
+      VERSION: ${{ inputs.version }}
+      # Title must match spec §8.1 exactly: "build failure: <tool> <version>";
+      # acceptance failures use "acceptance failure: <tool> <version>" so the
+      # watcher still blocks retries but a human knows the release exists.
+      TITLE_KIND: ${{ needs.accept.result == 'failure' && 'acceptance failure' || 'build failure' }}
+      RESULTS: >-
+        prepare=${{ needs.prepare.result }} build=${{ needs.build.result }}
+        publish=${{ needs.publish.result }} accept=${{ needs.accept.result }}
     steps:
-      # M1 (§9.2.5): create/refresh issue "build failure: <tool> <version>"
-      # with label build-failure (title "acceptance failure:" if accept failed).
-      - run: echo "TODO open build-failure issue (M1)"
+      - name: open or refresh build-failure issue
+        run: |
+          # Issue title formats (spec §8.1):
+          #   "build failure: <tool> <version>"
+          #   "acceptance failure: <tool> <version>"
+          # — same build-failure label either way, so the watcher still
+          # blocks retries while a human sees which stage broke.
+          title="$TITLE_KIND: $TOOL $VERSION"
+          gh label create build-failure \
+            --description "build broke; watcher blocks re-runs until closed (spec 8.1)" \
+            --force
+          body="Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"$'\n''Job results: '"$RESULTS"
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=build-failure&state=open" \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [ -n "$existing" ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$existing/comments" \
+              -f body="$body" > /dev/null
+          else
+            gh issue create --title "$title" --label build-failure --body "$body"
+          fi
