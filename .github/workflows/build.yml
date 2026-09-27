@@ -182,7 +182,7 @@ jobs:
           case "$PLATFORM" in
             linux-*) scripts/build-linux.sh ;;
             macos-*) scripts/build-macos.sh ;;
-            noarch)  sh "tools/$TOOL/build.sh" ;;
+            noarch)  "tools/$TOOL/build.sh" ;;   # shebang picks bash; plain `sh` is dash on Ubuntu
             *) echo "unknown platform: $PLATFORM" >&2; exit 1 ;;
           esac
 

@@ -78,7 +78,7 @@ echo "==> build"
 case "$PLATFORM" in
   linux-*) scripts/build-linux.sh ;;
   macos-*) scripts/build-macos.sh ;;
-  noarch)  sh "tools/$TOOL/build.sh" ;;
+  noarch)  "tools/$TOOL/build.sh" ;;   # shebang picks bash; plain `sh` is dash on Ubuntu
 esac
 
 echo "==> test"

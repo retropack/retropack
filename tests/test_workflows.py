@@ -95,6 +95,11 @@ def test_build_yml_pipeline_steps_present():
                  "scripts/build-macos.sh", "tools/$TOOL/test.sh",
                  "scripts/check-portability.sh", "scripts/package.sh"):
         assert frag in b, f"build job missing: {frag}"
+    # The noarch branch must honour build.sh's #!/usr/bin/env bash shebang —
+    # `sh script.sh` picks dash on Ubuntu (set: Illegal option -o pipefail),
+    # which is exactly how the first kickc CI run died.
+    assert 'sh "tools/$TOOL/build.sh"' not in b
+    assert '"tools/$TOOL/build.sh"' in b
     up = [s for s in _steps(build, "build")
           if str(s.get("uses", "")).startswith("actions/upload-artifact")]
     assert up, "build job must upload artifacts"
