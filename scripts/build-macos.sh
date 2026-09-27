@@ -25,6 +25,12 @@ print(' '.join(tomllib.load(open('$REPO_ROOT/tools/$TOOL/tool.toml', 'rb'))['bui
     fi
   done
   export PATH
+  # Apple clang does not search Homebrew's prefix by default — sdcc's
+  # configure dies on boost/graph/adjacency_list.hpp without this (headers
+  # live in $BREW_PREFIX/include; boost is header-only so the -L never puts a
+  # Homebrew dylib in the binary — check-portability enforces that).
+  export CPPFLAGS="${CPPFLAGS:+$CPPFLAGS }-I$BREW_PREFIX/include"
+  export LDFLAGS="${LDFLAGS:+$LDFLAGS }-L$BREW_PREFIX/lib"
 fi
 export CC=clang CXX=clang++
 export MACOSX_DEPLOYMENT_TARGET=12.0
