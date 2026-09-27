@@ -21,3 +21,15 @@ need a JRE on PATH).
 | `kickc` | GitLab `camelot/kickc` | MIT | JVM tool; needs JRE ≥ 11 on PATH |
 
 The specification lives in [`docs/specs/draft-1.md`](docs/specs/draft-1.md).
+
+## Git hooks
+
+Quality gates run via [hk](https://hk.jdx.dev) on every commit:
+**shellcheck** (`scripts/`, `tools/`), **yamllint** + **actionlint** (workflow
+YAML), and **pytest** (Python logic, workflow contracts, TOML schema — every
+`tool.toml` and root `.toml` must parse).
+
+- `hk check` — run all checks manually
+- `HK=0 git commit …` — bypass for a single commit
+- New clone setup: `mise install` (brings `hk` + `actionlint`), then `hk install`
+

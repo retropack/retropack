@@ -38,11 +38,11 @@ jobs:
       # retropack/<tool> (spec §8.1).
       - name: detect missing (tool, version) pairs
         run: |
-          FLAGS=""
-          [ -n "${{ inputs.tool }}" ] && FLAGS="$FLAGS --tool ${{ inputs.tool }}"
-          [ -n "${{ inputs.version }}" ] && FLAGS="$FLAGS --version ${{ inputs.version }}"
-          [ "${{ inputs.dry_run }}" = "true" ] && FLAGS="$FLAGS --dry-run"
-          python3 scripts/watch.py $FLAGS
+          set --
+          [ -n "${{ inputs.tool }}" ] && set -- "$@" --tool "${{ inputs.tool }}"
+          [ -n "${{ inputs.version }}" ] && set -- "$@" --version "${{ inputs.version }}"
+          [ "${{ inputs.dry_run }}" = "true" ] && set -- "$@" --dry-run
+          python3 scripts/watch.py "$@"
 
   # Re-enable the workflow as the last step of every run — resets GitHub's
   # 60-day inactivity timer without a dummy commit (spec §8.3).

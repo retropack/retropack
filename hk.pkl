@@ -1,0 +1,24 @@
+amends "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.0.1/hk@2.0.1#/Builtins.pkl"
+
+// Local quality gates — same checks ci.yml runs, plus workflow linting.
+// TOML lint lives in pytest (tests/test_tool_toml.py parses every manifest
+// and mise.toml), so one command covers the Python side everywhere.
+local checks = new Mapping<String, Step> {
+    ["shellcheck"] = Builtins.shellcheck
+    ["yamllint"] = Builtins.yamllint
+    ["actionlint"] = Builtins.actionlint
+    ["pytest"] {
+        check = "python3 -m pytest tests/ -q"
+        stomp = true
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        steps = checks
+    }
+    ["check"] {
+        steps = checks
+    }
+}

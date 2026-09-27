@@ -1,0 +1,10 @@
+extends: default
+
+rules:
+  document-start: disable   # workflows don't use ---
+  truthy: disable           # `on:` is a GitHub Actions keyword, not a bool
+  line-length:
+    max: 120
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1    # allow `{ required: true, ... }` inline maps

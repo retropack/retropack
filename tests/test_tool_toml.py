@@ -11,6 +11,16 @@ VALID_MODES = {"source", "repackage"}
 def test_at_least_five_tools():
     assert len(TOOLS) >= 5
 
+def test_root_toml_files_parse():
+    # TOML lint: every root-level .toml (mise.toml today, more later) must
+    # parse — pytest is the one command that gates all of this locally AND
+    # in ci.yml.
+    root = pathlib.Path(__file__).resolve().parent.parent
+    root_tomls = sorted(root.glob("*.toml"))
+    assert root_tomls, "expected at least mise.toml"
+    for path in root_tomls:
+        tomllib.loads(path.read_text())
+
 def test_schema_and_invariants():
     for path in TOOLS:
         data = tomllib.loads(path.read_text())
