@@ -10,6 +10,22 @@ NPROC="${NPROC:-$(sysctl -n hw.ncpu)}"
 
 # Build-time Homebrew packages (tool.toml macos_packages) are installed by the
 # caller; binaries must not link any /opt/homebrew dylib (check-portability.sh).
+# Keg-only formulae (bison, flex — Homebrew does NOT symlink them) must shadow
+# Apple's ancient copies: prepend their opt/ bin dirs to PATH (spec §10: "force
+# PATH to Homebrew bison"). Applies to every macos_packages entry — a missing
+# dir (e.g. boost, header-only) is simply skipped.
+if command -v brew >/dev/null 2>&1; then
+  BREW_PREFIX=$(brew --prefix)
+  _pkgs=$(python3 -c "
+import tomllib
+print(' '.join(tomllib.load(open('$REPO_ROOT/tools/$TOOL/tool.toml', 'rb'))['build'].get('macos_packages', [])))")
+  for _p in $_pkgs; do
+    if [ -d "$BREW_PREFIX/opt/$_p/bin" ]; then
+      PATH="$BREW_PREFIX/opt/$_p/bin:$PATH"
+    fi
+  done
+  export PATH
+fi
 export CC=clang CXX=clang++
 export MACOSX_DEPLOYMENT_TARGET=12.0
 export CFLAGS="-O2"
