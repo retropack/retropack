@@ -77,12 +77,18 @@ def test_parse_sourceforge_collects_filenames_from_best_release_and_rss():
     import json as _json
     best = _json.dumps({"release": {"filename": "64tass-1.59.3120-src.zip",
                                      "url": "https://sf.example/x/download"}})
-    rss = ("<rss><channel><item><title>tass64/source/64tass-1.59.3119-src.zip"
-           "</title></item></channel></rss>")
+    # Real SF RSS wraps titles in CDATA and prefixes the project path
+    # (this is what shipped: the unwrapped form never matched file_regex).
+    rss = ("<rss><channel>"
+           "<item><title><![CDATA[/source/64tass-1.59.3119-src.zip]]></title></item>"
+           "<item><title><![CDATA[/source/64tass-1.58.2974-src.zip]]></title></item>"
+           "<item><title>tass64/source (folder)</title></item>"
+           "</channel></rss>")
     names = watch.parse_sourceforge(best, rss)
     assert "64tass-1.59.3120-src.zip" in names
-    assert "64tass-1.59.3119-src.zip" in names   # basename of the RSS title path
+    assert "64tass-1.59.3119-src.zip" in names   # CDATA + path prefix stripped
+    assert "64tass-1.58.2974-src.zip" in names
     # composing with the manifest's file_regex yields normalized versions
     versions = watch.parse_tags(
         names, r"^64tass-(?P<version>\d+\.\d+\.\d+)-src\.zip$")
-    assert set(versions) >= {"1.59.3120", "1.59.3119"}
+    assert set(versions) >= {"1.59.3120", "1.59.3119", "1.58.2974"}

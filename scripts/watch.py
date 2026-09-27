@@ -140,14 +140,19 @@ def _json_strings(obj) -> list[str]:
 
 def parse_sourceforge(best_release_json: str, rss_xml: str) -> list[str]:
     """Candidate filenames from best_release.json + RSS (spec §8.1), basenamed
-    so anchored file_regexes can match regardless of the path around them."""
+    so anchored file_regexes can match regardless of the path around them.
+    Real SF RSS wraps titles in <![CDATA[/path/file.zip]]> — unwrap first."""
     cands = []
     try:
         cands += _json_strings(json.loads(best_release_json))
     except json.JSONDecodeError:
         pass
-    cands += re.findall(r"<title>(.*?)</title>", rss_xml, re.S)
-    return [os.path.basename(c.strip()) for c in cands]
+    for title in re.findall(r"<title>(.*?)</title>", rss_xml, re.S):
+        t = title.strip()
+        if t.startswith("<![CDATA[") and t.endswith("]]>"):
+            t = t[len("<![CDATA["):-len("]]>")].strip()
+        cands.append(t)
+    return [os.path.basename(c) for c in cands if c]
 
 
 def pick_latest(versions: list[str], min_version: str = "0.0",
