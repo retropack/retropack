@@ -54,3 +54,45 @@ def test_tarbz2_with_strip_components(tmp_path):
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "work" / "src" / "hello.c").exists(), \
         f"bz2 extract failed: {r.stderr}"
+
+def _fragment_from_patch() -> str:
+    """Original-side content of the real version-scoped patch (context + '-' lines)."""
+    patch = (REPO / "tools" / "tass64" / "patches" / "1.59.3120" /
+             "0001-rename-static-memalign.patch").read_text()
+    lines = []
+    for ln in patch.splitlines():
+        if ln.startswith("---") or ln.startswith("+++") or ln.startswith("@@"):
+            continue
+        if ln.startswith("-") or ln.startswith(" "):
+            lines.append(ln[1:])
+    return "\n".join(lines) + "\n"
+
+def _make_src_zip(tmp_path, content: str) -> str:
+    import zipfile
+    z = tmp_path / "src.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("pkg/64tass.c", content)
+        zf.writestr("pkg/Makefile", "all:\n\t@true\n")
+    return f"file://{z}"
+
+def test_version_scoped_patches_apply_only_to_their_version(tmp_path):
+    # tools/<tool>/patches/<version>/ holds patches for that version ONLY —
+    # tass64's memalign rename exists in 1.59.3120 and nowhere else.
+    original = _fragment_from_patch()
+    assert "static address_t memalign(" in original
+
+    r159 = run_fetch(tmp_path, _make_src_zip(tmp_path, original),
+                     "tass64", "1.59.3120")
+    assert r159.returncode == 0, r159.stderr
+    applied = (tmp_path / "work" / "src" / "64tass.c").read_text()
+    assert "static address_t v_memalign(" in applied, "version-scoped patch not applied"
+    assert "static address_t memalign(" not in applied
+
+    # Same source fetched as a different version: directory must be skipped.
+    import shutil
+    shutil.rmtree(tmp_path / "work")
+    r160 = run_fetch(tmp_path, _make_src_zip(tmp_path, original),
+                     "tass64", "1.60.3243")
+    assert r160.returncode == 0, r160.stderr
+    untouched = (tmp_path / "work" / "src" / "64tass.c").read_text()
+    assert "static address_t memalign(" in untouched, "patch must not leak to other versions"

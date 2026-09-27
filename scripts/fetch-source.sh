@@ -68,7 +68,17 @@ esac
 if [ -d "$REPO_ROOT/tools/$TOOL/patches" ]; then
   for p in "$REPO_ROOT/tools/$TOOL/patches"/*; do
     [ -e "$p" ] || continue
-    patch -d "$SRC" -p1 < "$p"
+    if [ -d "$p" ]; then
+      # Version-scoped: patches/<version>/ applies ONLY to that exact version
+      # (e.g. tass64's memalign rename exists in 1.59.3120 and nowhere else).
+      [ "$(basename "$p")" = "$VERSION" ] || continue
+      for q in "$p"/*; do
+        [ -f "$q" ] || continue
+        patch -d "$SRC" -p1 < "$q"
+      done
+    else
+      patch -d "$SRC" -p1 < "$p"
+    fi
   done
 fi
 
