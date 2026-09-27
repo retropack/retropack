@@ -6,18 +6,26 @@ on:
     branches: [main]
 
 jobs:
-  shellcheck:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck scripts/*.sh tools/*/*.sh
 
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # Lint tools come from mise.toml (hk, shellcheck, yamllint, actionlint)
+      # — identical versions locally and in CI, independent of whatever the
+      # runner image preinstalls.
+      - uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # pytest/PyYAML are Python libraries the suite imports, not CLI tools.
       - run: pip install pytest pyyaml
-      - run: python3 -m pytest tests/ -v
+
+      # The exact same gate as a local commit: shellcheck, yamllint,
+      # actionlint, pytest (incl. workflow contracts + TOML schema).
+      - run: hk check --all

@@ -31,5 +31,8 @@ YAML), and **pytest** (Python logic, workflow contracts, TOML schema — every
 
 - `hk check` — run all checks manually
 - `HK=0 git commit …` — bypass for a single commit
-- New clone setup: `mise install` (brings `hk` + `actionlint`), then `hk install`
+- New clone setup: `mise install` (brings hk, shellcheck, yamllint, actionlint), then `hk install`
+
+CI runs the identical gate (`hk check --all`) with the identical tool versions —
+both are sourced from `mise.toml`, so local and GitHub runners can't drift apart.
 

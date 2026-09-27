@@ -7,4 +7,6 @@ raw = true
 
 [tools]
 hk = "latest"
+shellcheck = "latest"
+yamllint = "latest"
 actionlint = "latest"
