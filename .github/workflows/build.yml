@@ -268,11 +268,13 @@ jobs:
           persist-credentials: false
 
       # Spec §9.2.4: prove autodetection, attestation verification and the
-      # archive layout by installing exactly what a user would.
-      - name: install mise
-        run: |
-          curl -fsSL https://mise.run | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # archive layout by installing exactly what a user would. mise itself
+      # comes from the same action ci.yml uses (security review F3: no
+      # `curl | sh` of an unpinned remote script). install: false — the brain's
+      # dev tools are not what's under test here.
+      - uses: jdx/mise-action@v4
+        with:
+          install: false
 
       - name: acceptance install via mise
         env:

@@ -128,13 +128,16 @@ def test_build_yml_publish_job_flow():
     assert step_names.index("attest build provenance") < step_names.index("publish release")
 
 def test_build_yml_accept_job_installs_via_mise():
-    # §9.2.4: mise from mise.run, install with MISE_GITHUB_TOKEN, test with mise where.
+    # §9.2.4: mise via the pinned action (security review F3 — no `curl | sh`),
+    # install with MISE_GITHUB_TOKEN, test with mise where.
     # The token lives in step env (never interpolated into run: — see the
     # no-gh-expressions test), so search the whole job definition.
     build = yaml.safe_load((WF / "build.yml").read_text())
     a = str(build["jobs"]["accept"])
-    for frag in ("mise.run", "mise install", "MISE_GITHUB_TOKEN", "mise where"):
+    for frag in ("jdx/mise-action", "mise install", "MISE_GITHUB_TOKEN", "mise where"):
         assert frag in a, f"accept job missing: {frag}"
+    assert "mise.run" not in a and "| sh" not in a, \
+        "accept job must not pipe a remote script to sh"
 
 def test_build_yml_on_failure_opens_issue():
     # §9.2.5/§8.1: issue titled "build failure: <tool> <version>", label build-failure.
