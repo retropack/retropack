@@ -179,7 +179,9 @@ def resolve_source_url(cfg: dict, version: str) -> str:
     shells out to this (--source-url) so watcher hashes and build downloads
     can never resolve differently."""
     src = cfg["source"]
-    if cfg["build"].get("mode", "source") != "repackage":
+    # section itself is optional — mode defaults to "source" (spec §5 example
+    # marks [build] fields optional; a missing section must not traceback)
+    if cfg.get("build", {}).get("mode", "source") != "repackage":
         return src["url"].replace("{version}", version)
     up = cfg["upstream"]
     if up["type"] != "gitlab":

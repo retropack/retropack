@@ -26,12 +26,13 @@ The specification lives in [`docs/specs/draft-1.md`](docs/specs/draft-1.md).
 
 Quality gates run via [hk](https://hk.jdx.dev) on every commit:
 **shellcheck** (`scripts/`, `tools/`), **yamllint** + **actionlint** (workflow
-YAML), and **pytest** (Python logic, workflow contracts, TOML schema — every
-`tool.toml` and root `.toml` must parse).
+YAML), and **pytest** via [uv](https://docs.astral.sh/uv) (Python logic,
+workflow contracts, TOML schema — every `tool.toml` and root `.toml` must
+parse; test deps are exact pins in `scripts/run-tests.py`'s inline metadata).
 
 - `hk check` — run all checks manually
 - `HK=0 git commit …` — bypass for a single commit
-- New clone setup: `mise install` (brings hk, shellcheck, yamllint, actionlint), then `hk install`
+- New clone setup: `mise install` (brings hk, uv, shellcheck, yamllint, actionlint), then `hk install`
 
 CI runs the identical gate (`hk check --all`) with the identical tool versions —
 both are sourced from `mise.toml`, so local and GitHub runners can't drift apart.

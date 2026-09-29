@@ -16,20 +16,19 @@ jobs:
         with:
           persist-credentials: false     # PR code runs here (pytest); no token in .git
 
-      # Lint tools come from mise.toml (hk, shellcheck, yamllint, actionlint)
-      # — identical versions locally and in CI, independent of whatever the
+      # Lint tools come from mise.toml (hk, uv, shellcheck, yamllint,
+      # actionlint) — identical versions locally and in CI, independent of whatever the
       # runner image preinstalls.
       - uses: jdx/mise-action@v4
         with:
           install: true
           cache: true
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      # pytest/PyYAML are Python libraries the suite imports, not CLI tools.
-      - run: pip install pytest pyyaml
+      # Nothing in this workflow installs Python packages (security review F6):
+      # test deps are exact pins in the PEP 723 metadata of
+      # scripts/run-tests.py, and hk's pytest step runs them through `uv run`
+      # — the same command a local commit runs. uv brings its own Python
+      # (requires-python there), so there is no separate Python-setup action.
 
       # The exact same gate as a local commit: shellcheck, yamllint,
       # actionlint, pytest (incl. workflow contracts + TOML schema).

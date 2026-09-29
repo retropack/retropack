@@ -121,6 +121,24 @@ def test_pin_gate_enforces_reviewed_hashes(tmp_path):
         assert r.returncode != 0 and "no pin" in r.stderr
 
 
+def test_non_https_source_url_refused_on_production_path(tmp_path):
+    # F4: without the SRC_URL override, only https is admissible — a hostile
+    # manifest URL or release-asset link must not reach curl (file:// was the
+    # F4 hole; http is the same refusal). curl rejects at URL-parse time, so
+    # no connection is attempted and example.invalid never gets contacted.
+    with temp_tool("_t_proto") as d:
+        (d / "tool.toml").write_text(
+            '[source]\nurl = "http://example.invalid/{version}.tar.gz"\n')
+        env = dict(os.environ, TOOL="_t_proto", VERSION="1.0",
+                   WORK=str(tmp_path / "work"))
+        env.pop("SRC_URL", None)
+        env.pop("SRC", None)
+        r = subprocess.run(["bash", str(SCRIPT)], env=env,
+                           capture_output=True, text=True)
+        assert r.returncode != 0 and "Protocol" in r.stderr, \
+            f"http source url was not refused: rc={r.returncode} {r.stderr}"
+
+
 def test_version_scoped_patches_apply_only_to_their_version(tmp_path):
     # tools/<tool>/patches/<version>/ holds patches for that version ONLY —
     # tass64's memalign rename exists in 1.59.3120 and nowhere else.

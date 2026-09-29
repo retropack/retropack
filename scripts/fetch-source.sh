@@ -39,7 +39,14 @@ ARCHIVE="$WORK/src-archive"
 # allowed for the local tests. Capture the EFFECTIVE (post-redirect) URL —
 # package.sh cites it in the RETROPACK-NOTICE so provenance names the exact
 # file shipped (matters for repackage: shortener → stable wiki upload URL).
-EFFECTIVE=$(curl -fsSL --proto '=https,file' --proto-redir '=https' \
+# HTTPS only; file:// is admitted solely alongside the test-only SRC_URL
+# override (security review F4) — a hostile manifest URL or repackage
+# release-asset link can never aim curl at local files.
+PROTO='=https'
+if [ -n "${SRC_URL:-}" ]; then
+  PROTO='=https,file'
+fi
+EFFECTIVE=$(curl -fsSL --proto "$PROTO" --proto-redir '=https' \
   -w '%{url_effective}' -o "$ARCHIVE" "$SRC_URL")
 printf '%s\n' "$EFFECTIVE" > "$WORK/.source-url"
 
@@ -88,10 +95,13 @@ case "$MAGIC" in
     fi
     ;;
   1f8b*)                              # gzip
-    tar -xzf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
+    # --no-same-owner (security review F5): builds run as root in the linux
+    # container; archive-provided ownership must never be restored.
+    # (bsdtar on the macOS leg accepts the flag too.)
+    tar --no-same-owner -xzf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
     ;;
   425a*)                              # BZh — sdcc ships .tar.bz2 exclusively
-    tar -xjf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
+    tar --no-same-owner -xjf "$ARCHIVE" -C "$SRC" --strip-components="$STRIP"
     ;;
   *)
     echo "fetch-source: unrecognized archive format for $SRC_URL (magic $MAGIC)" >&2

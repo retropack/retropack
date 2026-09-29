@@ -239,6 +239,22 @@ def test_watch_yml_pins_review_gate():
     run = _runs(watch["jobs"]["detect"])
     assert "['dispatch']" in run and "['propose']" in run
 
+def test_ci_pins_python_deps():
+    # F6: test deps are exact pins in the PEP 723 metadata of the uv runner
+    # (+ committed lock); mise provides uv, and ci.yml installs nothing — the
+    # hk pytest step and CI run the identical `uv run scripts/run-tests.py`.
+    runner = (REPO / "scripts" / "run-tests.py").read_text()
+    assert "pytest==" in runner and "pyyaml==" in runner, \
+        "test deps must be exact pins in the runner's inline metadata"
+    assert (REPO / "scripts" / "run-tests.py.lock").exists(), \
+        "runner lock (transitive tree) must be committed"
+    assert "uv = " in (REPO / "mise.toml").read_text(), "mise must provide uv"
+    ci = (WF / "ci.yml").read_text()
+    assert "pip install" not in ci and "setup-python" not in ci, \
+        "ci.yml must not install Python deps itself"
+    assert "uv run" in (REPO / "hk.pkl").read_text(), \
+        "hk's pytest gate must run through uv"
+
 def test_no_jq_program_interpolation():
     # Values must enter jq/awk as data (-v/--arg), never inside the program
     # text — a crafted version could otherwise steer the draft-id query that

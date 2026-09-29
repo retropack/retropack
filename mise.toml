@@ -7,6 +7,7 @@ raw = true
 
 [tools]
 hk = "latest"
+uv = "latest"      # test-suite env: scripts/run-tests.py (PEP 723 pins)
 shellcheck = "latest"
 yamllint = "latest"
 actionlint = "latest"
