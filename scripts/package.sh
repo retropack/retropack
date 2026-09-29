@@ -93,6 +93,13 @@ for field, value in {
     "source_url": source_url,
     "source_tag": source_tag,
     "license": tool.get("license", ""),
+    # Repackage honesty (security review F2): the attestation proves "this
+    # workflow produced these bytes", which for repackage tools means
+    # "repackaged upstream prebuilt binaries" — say so in the shipped notice.
+    "build_mode": ("source — compiled from upstream source by this pipeline"
+                   if t["build"].get("mode", "source") == "source"
+                   else "repackage — upstream prebuilt binaries repackaged as-is "
+                        "(NOT compiled by retropack)"),
     "patches": patches_field,
     "platform": platform,
     "build_date": datetime.date.today().isoformat(),

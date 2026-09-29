@@ -36,6 +36,7 @@ def test_package_succeeds_and_ships_licence_and_notice(tmp_path):
         notice = tf.extractfile("cc65-2.19/RETROPACK-NOTICE").read().decode()
     # §7.3: exact source tag — cc65 tags are V<version>, not v<version>
     assert "(tag V2.19)" in notice, notice
+    assert "compiled from upstream source" in notice, notice
     dist.unlink()
 
 
@@ -68,6 +69,9 @@ def test_package_prefers_recorded_source_url(tmp_path):
         notice = tf.extractfile("kickc-0.8.6/RETROPACK-NOTICE").read().decode()
     assert "wikis/uploads/abc123/kickc_0.8.6.zip" in notice, notice
     assert "(tag 0.8.6)" in notice, notice   # tag still from the manifest pattern
+    # F2: repackage must not masquerade as a build — attestation covers the
+    # pipeline, and the notice states the bytes are upstream's prebuilt jars
+    assert "prebuilt binaries repackaged as-is" in notice, notice
 
 def test_package_handles_readonly_prefix(tmp_path):
     # CI builds run in rootful docker → $PREFIX is root:root 755 while the
