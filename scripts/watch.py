@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""watch.py — upstream/released diff + dispatch (spec §8.1).
+"""watch.py — upstream/released diff, source-hash pins + dispatch (spec §8.1).
 
-Stdlib only. Pure logic (parsing, version compare, pending selection,
-latest-version resolution) is implemented and tested; network fetch +
-repository_dispatch land in M1.
+Stdlib only. Pending versions split at the review gate: pinned ones are
+dispatchable; unpinned ones are downloaded (never extracted/executed) and
+hashed for a pins PR — the human merge is the pipeline's trust root.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import tomllib
+import urllib.parse
 import urllib.request
 from functools import cmp_to_key
 
@@ -168,16 +170,136 @@ def _github_get(path: str) -> str:
         return r.read().decode("utf-8", "replace")
 
 
-def detect(tool_filter: str | None = None,
-           force_version: str | None = None) -> dict[str, list[str]]:
-    """The spec §8.1 algorithm: {tool: [versions to dispatch]}.
+# --- source-hash pins: the §8.1 review gate ---
 
-    force_version bypasses the released/blocked checks but still honors the
-    manifest's min_version/skip_versions policy (spec §8.2's forced input).
+def resolve_source_url(cfg: dict, version: str) -> str:
+    """Download URL for one version: the manifest's {version} template, or
+    the GitLab release asset link for repackage mode (kickc's distribution
+    zip lives behind a per-version release link — spec §10). fetch-source.sh
+    shells out to this (--source-url) so watcher hashes and build downloads
+    can never resolve differently."""
+    src = cfg["source"]
+    if cfg["build"].get("mode", "source") != "repackage":
+        return src["url"].replace("{version}", version)
+    up = cfg["upstream"]
+    if up["type"] != "gitlab":
+        raise ValueError(f"repackage mode only supports gitlab upstream (got {up['type']})")
+    project = urllib.parse.quote(up["repo"], safe="")
+    req = urllib.request.Request(
+        f"https://gitlab.com/api/v4/projects/{project}/releases",
+        headers={"User-Agent": "retropack-fetch"})
+    releases = urllib.request.urlopen(req, timeout=30).read().decode()
+    return release_asset_url(releases, version, src.get("release_asset", "Binary"))
+
+
+class _HTTPSOnly(urllib.request.HTTPRedirectHandler):
+    """Refuse protocol-downgrade redirects: these digests land in the
+    reviewed pins file, so a poisoned fetch here corrupts the trust root
+    itself, not just one build."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise ValueError(f"refusing non-https redirect: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def fetch_sha256(url: str) -> str:
+    """sha256 of the archive at `url`. HTTPS-only, initial request and every
+    redirect (kickc's shortener → wiki chain stays https). Streamed straight
+    into the digest — the watcher never extracts or executes what it hashes,
+    so this is safe to run with a read-only token on attacker-sized input."""
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing non-https source url: {url}")
+    opener = urllib.request.build_opener(_HTTPSOnly)
+    req = urllib.request.Request(url, headers={"User-Agent": "retropack-watch"})
+    h = hashlib.sha256()
+    with opener.open(req, timeout=60) as r:
+        for chunk in iter(lambda: r.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _pins_path(tool: str, tools_dir: str | None = None) -> str:
+    return os.path.join(tools_dir or _TOOLS_DIR, tool, "source-sha256.txt")
+
+
+def pinned_versions(tool: str) -> set[str]:
+    """Versions with a reviewed source-hash pin. No file → nothing pinned:
+    the watcher proposes instead of dispatching, and fetch-source.sh stays
+    permissive until the file first exists — that merge gates the tool."""
+    try:
+        with open(_pins_path(tool)) as f:
+            return {ln.split()[1] for ln in f
+                    if ln.strip() and not ln.startswith("#")}
+    except FileNotFoundError:
+        return set()
+
+
+def write_pins(propose: dict, only_tool: str | None, body_dir: str,
+               tools_dir: str | None = None) -> list[str]:
+    """Append propose hashes to tools/<tool>/source-sha256.txt (idempotent)
+    and write the PR review body to body_dir/<tool>.md. Returns tools touched."""
+    root = tools_dir or _TOOLS_DIR
+    os.makedirs(body_dir, exist_ok=True)
+    touched = []
+    for tool, versions in sorted(propose.items()):
+        if only_tool and tool != only_tool:
+            continue
+        path = _pins_path(tool, root)
+        lines = []
+        if os.path.exists(path):
+            lines = open(path).read().splitlines()
+        have = {ln.split()[1] for ln in lines if ln.strip() and not ln.startswith("#")}
+        new = [(v, versions[v]) for v in sorted(versions) if v not in have]
+        if not new:
+            continue
+        if not lines:
+            lines = ["# Reviewed source-archive hashes (spec §8.1 review gate): '<sha256>  <version>'.",
+                     "# fetch-source.sh refuses to build a version missing from this file; the",
+                     "# watcher dispatches a new version only after its pin PR merges."]
+        lines += [f"{meta['sha256']}  {v}" for v, meta in new]
+        with open(path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        rows = "\n".join(f"| `{v}` | `{meta['sha256']}` | {meta['url']} |"
+                         for v, meta in new)
+        body = "\n".join([
+            f"## Source-hash pins: {tool}",
+            "",
+            "The watcher found new upstream version(s) and hashed the source archives",
+            "it would build (download only — nothing was extracted or executed).",
+            "Review = reproduce a hash locally and compare:",
+            "",
+            f"    python3 scripts/watch.py --source-sha256 {tool} <version>",
+            "",
+            "| version | sha256 | source |",
+            "| --- | --- | --- |",
+            rows,
+            "",
+            f"Merging appends these pins to `tools/{tool}/source-sha256.txt`; the next",
+            "watch run dispatches the build. Once the file exists, `fetch-source.sh`",
+            "refuses to build a version missing from it — the merge is the gate.",
+            "",
+        ])
+        with open(os.path.join(body_dir, f"{tool}.md"), "w") as f:
+            f.write(body)
+        touched.append(tool)
+    return touched
+
+
+def detect(tool_filter: str | None = None,
+           force_version: str | None = None) -> dict:
+    """The spec §8.1 algorithm, split at the review gate:
+    {"dispatch": {tool: [pinned versions]}, "propose": {tool: {version:
+    {sha256, url}}}}.
+
+    force_version bypasses the released/blocked checks AND the pin gate (a
+    maintainer forcing a build IS the review checkpoint; fetch-source.sh
+    still enforces pins for gated tools) but honors the manifest's
+    min_version/skip_versions policy (spec §8.2's forced input).
     """
     if force_version and not tool_filter:
         raise ValueError("--version forces a build within a single --tool")
-    pending_all: dict[str, list[str]] = {}
+    dispatch: dict[str, list[str]] = {}
+    propose: dict[str, dict[str, dict[str, str]]] = {}
     for name in sorted(os.listdir(_TOOLS_DIR)):
         if name.startswith("_"):
             continue
@@ -192,17 +314,31 @@ def detect(tool_filter: str | None = None,
         versions = eligible(raw, up.get("min_version", "0.0"),
                             up.get("skip_versions"))
         if force_version:
-            pending = versions[:cap]
-        else:
-            released = released_from_api(
-                _github_get(f"/repos/retropack/{name}/releases?per_page=100"))
-            blocked = blocked_from_issues(
-                _github_get(f"/repos/retropack/{name}/issues?labels=build-failure&state=open"),
-                name)
-            pending = select_pending(versions, released, blocked, cap)
-        if pending:
-            pending_all[name] = pending
-    return pending_all
+            if versions:
+                dispatch[name] = versions[:cap]
+            continue
+        released = released_from_api(
+            _github_get(f"/repos/retropack/{name}/releases?per_page=100"))
+        blocked = blocked_from_issues(
+            _github_get(f"/repos/retropack/{name}/issues?labels=build-failure&state=open"),
+            name)
+        pending = select_pending(versions, released, blocked, cap)
+        if not pending:
+            continue
+        pins = pinned_versions(name)
+        ready = [v for v in pending if v in pins]
+        if ready:
+            dispatch[name] = ready
+        # ponytail: unmerged pins get re-hashed every run until merge
+        # (idempotent force-push); dedupe via PR-query if download size matters
+        for v in [v for v in pending if v not in pins]:
+            try:
+                url = resolve_source_url(cfg, v)
+                propose.setdefault(name, {})[v] = {
+                    "sha256": fetch_sha256(url), "url": url}
+            except Exception as e:  # one bad download must not block other tools
+                print(f"watch: {name} {v}: hash fetch failed: {e}", file=sys.stderr)
+    return {"dispatch": dispatch, "propose": propose}
 
 
 def main(argv: list[str]) -> int:
@@ -219,8 +355,30 @@ def main(argv: list[str]) -> int:
                    help="read a releases JSON array on stdin; print the id of "
                         "the highest published release (empty if none)")
     p.add_argument("--detect", action="store_true",
-                   help="print pending {tool: [versions]} JSON (spec §8.1) and exit")
+                   help="print {\"dispatch\": ..., \"propose\": ...} JSON (spec §8.1) and exit")
+    p.add_argument("--source-url", nargs=2, metavar=("TOOL", "VERSION"),
+                   help="print the resolved download URL (fetch-source.sh uses this)")
+    p.add_argument("--source-sha256", nargs=2, metavar=("TOOL", "VERSION"),
+                   help="print '<sha256>  VERSION' — for reviewing/hand-adding pins")
+    p.add_argument("--write-pins", nargs="?", const="", metavar="TOOL",
+                   help="read propose JSON on stdin; append pins + write PR body "
+                        "(--body-dir) for TOOL, or all tools when omitted")
+    p.add_argument("--body-dir", metavar="DIR", help="PR body output dir for --write-pins")
     args = p.parse_args(argv)
+    if args.source_url:
+        tool, version = args.source_url
+        print(resolve_source_url(_load_manifest(tool), version))
+        return 0
+    if args.source_sha256:
+        tool, version = args.source_sha256
+        print(f"{fetch_sha256(resolve_source_url(_load_manifest(tool), version))}  {version}")
+        return 0
+    if args.write_pins is not None:
+        if not args.body_dir:
+            p.error("--write-pins needs --body-dir")
+        print(" ".join(write_pins(json.load(sys.stdin), args.write_pins or None,
+                                  args.body_dir)))
+        return 0
     if args.highest_id:
         print(highest_release_id(json.load(sys.stdin)))
         return 0

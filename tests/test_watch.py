@@ -44,6 +44,109 @@ def test_select_pending_dedupes_equivalent_versions():
 def test_main_stub_returns_zero():
     assert watch.main(["--dry-run"]) == 0
 
+# --- source-hash pins: the §8.1 review gate ---
+
+def test_resolve_source_url_template_substitutes_version():
+    cfg = {"build": {"mode": "source"},
+           "source": {"url": "https://example.com/v{version}/src.tar.gz"}}
+    assert watch.resolve_source_url(cfg, "2.19") == \
+        "https://example.com/v2.19/src.tar.gz"
+
+def test_resolve_source_url_repackage_resolves_gitlab_asset(monkeypatch):
+    import json as _json
+    class _R:
+        def read(self):
+            return _json.dumps([{"tag_name": "0.8.6", "assets": {"links": [
+                {"name": "Binary", "url": "https://gitlab.com/x.zip"}]}}]).encode()
+    monkeypatch.setattr(watch.urllib.request, "urlopen", lambda req, timeout: _R())
+    cfg = {"build": {"mode": "repackage"},
+           "upstream": {"type": "gitlab", "repo": "camelot/kickc"},
+           "source": {"url": "https://example.com/src.tar.gz", "release_asset": "Binary"}}
+    assert watch.resolve_source_url(cfg, "0.8.6") == "https://gitlab.com/x.zip"
+    # non-gitlab repackage upstream is a manifest error, not a silent template
+    cfg["upstream"] = {"type": "github", "repo": "o/r"}
+    try:
+        watch.resolve_source_url(cfg, "1.0")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError")
+
+def test_fetch_sha256_refuses_non_https_initial_url():
+    # The digest lands in the reviewed pins file — a downgrade here poisons
+    # the trust root, not just one build.
+    for bad in ("http://example.com/x.tgz", "file:///etc/passwd"):
+        try:
+            watch.fetch_sha256(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad}")
+
+def test_https_only_handler_blocks_redirect_downgrade():
+    try:
+        watch._HTTPSOnly().redirect_request(None, None, 302, "", {}, "http://evil/x")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("http redirect target allowed")
+
+def test_pinned_versions_reads_file_and_tolerates_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(watch, "_TOOLS_DIR", str(tmp_path))
+    assert watch.pinned_versions("nope") == set()          # no file → ungated
+    (tmp_path / "t").mkdir()
+    (tmp_path / "t" / "source-sha256.txt").write_text("# comment\nabc  1.2.3\n\n")
+    assert watch.pinned_versions("t") == {"1.2.3"}
+
+def test_write_pins_creates_appends_and_is_idempotent(tmp_path):
+    (tmp_path / "t1").mkdir()
+    propose = {"t1": {"2.0": {"sha256": "bb", "url": "https://x/2"},
+                      "1.0": {"sha256": "aa", "url": "https://x/1"}}}
+    bodies = str(tmp_path / "bodies")
+    touched = watch.write_pins(propose, None, bodies, tools_dir=str(tmp_path))
+    assert touched == ["t1"]
+    pins = (tmp_path / "t1" / "source-sha256.txt").read_text()
+    assert "aa  1.0" in pins and "bb  2.0" in pins
+    body = (tmp_path / "bodies" / "t1.md").read_text()
+    assert "aa" in body and "https://x/2" in body      # reviewer gets hash + provenance
+    # idempotent: the same propose adds nothing (daily re-hash before merge)
+    assert watch.write_pins(propose, None, bodies, tools_dir=str(tmp_path)) == []
+    # appending keeps existing pins; --write-pins TOOL filters
+    more = {"t1": {"3.0": {"sha256": "cc", "url": "https://x/3"}},
+            "t2": {"9.9": {"sha256": "dd", "url": "https://y/9"}}}
+    (tmp_path / "t2").mkdir()
+    assert watch.write_pins(more, "t1", bodies, tools_dir=str(tmp_path)) == ["t1"]
+    pins = (tmp_path / "t1" / "source-sha256.txt").read_text()
+    assert "aa  1.0" in pins and "cc  3.0" in pins
+    assert not (tmp_path / "t2" / "source-sha256.txt").exists()
+
+def test_detect_splits_dispatch_and_propose_at_the_pin_gate(tmp_path, monkeypatch):
+    tool = tmp_path / "fake"
+    tool.mkdir()
+    (tool / "tool.toml").write_text(
+        '[upstream]\ntype = "github"\nrepo = "o/r"\n'
+        'tag_regex = "^(?P<version>[0-9.]+)$"\n'
+        '[source]\nurl = "https://x/{version}.tar.gz"\n'
+        '[build]\nmode = "source"\n')
+    (tool / "source-sha256.txt").write_text("00  1.0\n")   # 1.0 reviewed, 2.0 not
+    monkeypatch.setattr(watch, "_TOOLS_DIR", str(tmp_path))
+    monkeypatch.setattr(watch, "upstream_versions", lambda t, cfg=None: ["1.0", "2.0"])
+    monkeypatch.setattr(watch, "_github_get", lambda path: "[]")
+    monkeypatch.setattr(watch, "fetch_sha256", lambda url: "ff" * 32)
+    out = watch.detect()
+    assert out["dispatch"] == {"fake": ["1.0"]}            # pinned → build
+    assert out["propose"]["fake"]["2.0"]["sha256"] == "ff" * 32   # unpinned → PR
+    assert out["propose"]["fake"]["2.0"]["url"] == "https://x/2.0.tar.gz"
+    # a failed hash fetch skips that version but keeps the rest of the run
+    def boom(url):
+        raise OSError("network down")
+    monkeypatch.setattr(watch, "fetch_sha256", boom)
+    out = watch.detect()
+    assert out["dispatch"] == {"fake": ["1.0"]} and out["propose"] == {}
+    # forced build bypasses the gate entirely — the maintainer IS the review
+    out = watch.detect("fake", "9.9")
+    assert out == {"dispatch": {"fake": ["9.9"]}, "propose": {}}
+
 def test_latest_flag_only_highest_wins():
     releases = [
         {"tag_name": "v4.6.0", "draft": False, "prerelease": False},

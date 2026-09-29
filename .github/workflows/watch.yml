@@ -28,6 +28,7 @@ jobs:
     outputs:
       pending: ${{ steps.detect.outputs.pending }}
       tools: ${{ steps.detect.outputs.tools }}
+      unpinned: ${{ steps.detect.outputs.unpinned }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,11 +52,20 @@ jobs:
           set --
           [ -n "$IN_TOOL" ] && set -- "$@" --tool "$IN_TOOL"
           [ -n "$IN_VERSION" ] && set -- "$@" --version "$IN_VERSION"
-          pending=$(python3 scripts/watch.py --detect "$@")
-          echo "pending=$pending" >> "$GITHUB_OUTPUT"
-          tools=$(printf '%s' "$pending" | python3 -c "import json,sys; print(json.dumps(list(json.load(sys.stdin))))")
-          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          # detect prints {"dispatch": {tool: [pinned versions]}, "propose":
+          # {tool: {version: {sha256, url}}}} — only pinned versions dispatch.
+          result=$(python3 scripts/watch.py --detect "$@")
+          get() { printf '%s' "$1" | python3 -c "import json,sys; $2"; }
+          pending=$(get "$result" "print(json.dumps(json.load(sys.stdin)['dispatch'], sort_keys=True))")
+          unpinned=$(get "$result" "print(json.dumps(json.load(sys.stdin)['propose'], sort_keys=True))")
+          tools=$(get "$pending" "print(json.dumps(list(json.load(sys.stdin))))")
+          {
+            echo "pending=$pending"
+            echo "unpinned=$unpinned"
+            echo "tools=$tools"
+          } >> "$GITHUB_OUTPUT"
           echo "pending: $pending"
+          echo "unpinned: $unpinned"
 
   # One matrix leg per tool so each token is minted for EXACTLY one repo
   # (security review: per-target scoping; permission-contents only — all
@@ -94,6 +104,72 @@ jobs:
             printf '%s' "$payload" \
               | gh api -X POST "repos/retropack/$TOOL/dispatches" --input - > /dev/null
             echo "dispatched retropack/$TOOL build $v"
+          done
+
+  # Review gate (spec §8.1): an unpinned version gets NO build — the watcher
+  # hashes the archive (download only, never extracted) and opens one pins PR
+  # per tool. The human merge is the pipeline's trust root: the next watch run
+  # dispatches pinned versions, and fetch-source.sh refuses unpinned ones once
+  # the tool's pins file exists. Branches are per-tool and force-pushed, so a
+  # re-run updates the open PR instead of spamming new ones.
+  propose:
+    needs: detect
+    if: needs.detect.outputs.unpinned != '{}' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    # No job-level permissions: push + PR go through the App token; the
+    # GITHUB_TOKEN keeps the workflow-level contents: read.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: mint app token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RETROPACK_APP_ID }}
+          private-key: ${{ secrets.RETROPACK_APP_PRIVATE_KEY }}
+          # The App must ALSO be installed on this (brain) repo with contents +
+          # pull-requests write: a PR opened by GITHUB_TOKEN never triggers
+          # ci.yml (GitHub's recursion guard), so the App opens pins PRs.
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: write pins + open one PR per tool
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          UNPINNED: ${{ needs.detect.outputs.unpinned }}
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse HEAD)
+          git config user.name "retropack-bot[bot]"
+          git config user.email "retropack-bot[bot]@users.noreply.github.com"
+          get() { printf '%s' "$UNPINNED" | python3 -c "import json,sys; $1"; }
+          for tool in $(get "print(' '.join(json.load(sys.stdin)))"); do
+            branch="watch/pins-$tool"
+            git checkout -B "$branch" "$base"
+            printf '%s' "$UNPINNED" | python3 scripts/watch.py --write-pins "$tool" --body-dir bodies
+            git add "tools/$tool/source-sha256.txt"
+            versions=$(get "print(', '.join(json.load(sys.stdin)['$tool']))")
+            git commit -m "pins: $tool $versions"
+            # App token rides the push URL only — never persisted to .git/config.
+            git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+              "HEAD:refs/heads/$branch"
+            pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open \
+              --json number --jq '.[0].number')
+            if [ -n "$pr" ]; then
+              gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --body-file "bodies/$tool.md" > /dev/null
+              echo "updated pins PR #$pr ($tool)"
+            else
+              gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+                --title "source pins: $tool" --body-file "bodies/$tool.md" > /dev/null
+              echo "opened pins PR ($tool): $versions"
+            fi
           done
 
   # Re-enable the workflow as the last step of every run — resets GitHub's

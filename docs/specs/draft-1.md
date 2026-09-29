@@ -190,8 +190,9 @@ max_per_run = 2                       # cap on dispatches per watch run for this
 [source]
 url = "https://github.com/cc65/cc65/archive/refs/tags/V{version}.tar.gz"
 strip_components = 1
-# optional: sha256 lookup is not possible for upstream-generated tarballs; integrity
-# comes from HTTPS + the fact that the build is reproducible from the tag.
+# Source-hash pins live in tools/<name>/source-sha256.txt (written by watcher PRs,
+# merged by a human): fetch-source.sh enforces them once the file exists (§8.1
+# review gate). HTTPS is the fetch path, not the integrity check.
 
 [build]
 mode = "source"                       # source | repackage
@@ -327,10 +328,13 @@ released  = tags of published (non-draft, non-prerelease) releases in retropack/
 blocked   = versions named in OPEN issues labelled `build-failure` in retropack/<tool>
             (title format: "build failure: <tool> <version>")
 pending   = sorted(upstream − released − blocked)[-max_per_run:]     # newest first, capped
-for v in pending: repository_dispatch(retropack/<tool>, event_type="build", client_payload={version: v})
+for v in pending where v is pinned: repository_dispatch(retropack/<tool>, event_type="build", client_payload={version: v})
+for v in pending where v is unpinned: hash the source archive (download only) and open/update a pins PR
 ```
 
-Properties: idempotent; automatic backfill of the whole `>= min_version` history; automatic daily retry of failures; **self-throttling** — a failure opens an issue, which blocks that version until a human closes the issue (closing = "retry"). No write-back to the brain repo needed.
+**Review gate (source-hash pins):** `tools/<tool>/source-sha256.txt` holds reviewed `<sha256>  <version>` lines. The watcher computes hashes for unpinned pending versions and opens one PR per tool (branch `watch/pins-<tool>`, force-pushed on re-runs); only versions whose pin has merged are dispatched, and `fetch-source.sh` refuses to build an unpinned version once a tool's pins file exists. The human merge — not the schedule, not HTTPS — is the integrity root: a moved tag or replaced upstream upload after review fails the pin check loudly. `--version` forced builds bypass the gate in the watcher (the maintainer is the checkpoint) but still hit the pins file in `fetch-source.sh`.
+
+Properties: idempotent; automatic backfill of the whole `>= min_version` history; automatic daily retry of failures; **self-throttling** — a failure opens an issue, which blocks that version until a human closes the issue (closing = "retry"). The pins PR is the only write-back to the brain repo (via the App token, per-tool branch).
 Upstream adapters (all JSON APIs, no HTML scraping):
 | type | Endpoint |
 | --- | --- |

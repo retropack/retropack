@@ -75,6 +75,40 @@ def _make_src_zip(tmp_path, content: str) -> str:
         zf.writestr("pkg/Makefile", "all:\n\t@true\n")
     return f"file://{z}"
 
+def test_pin_gate_enforces_reviewed_hashes(tmp_path):
+    # §8.1 review gate: once tools/<tool>/source-sha256.txt exists, fetch
+    # refuses unpinned versions and hash mismatches. fetch-source resolves
+    # REPO_ROOT from its own path, so the tool dir must live in the real repo
+    # for the duration of this test (cleaned up in finally).
+    import hashlib, shutil
+    url = _make_src_zip(tmp_path, "pinned content")
+    good = hashlib.sha256((tmp_path / "src.zip").read_bytes()).hexdigest()
+    tool_dir = REPO / "tools" / "testpin"
+    try:
+        tool_dir.mkdir()
+        (tool_dir / "tool.toml").write_text(
+            '[source]\nurl = "https://example.invalid/{version}.zip"\n')
+        pins = tool_dir / "source-sha256.txt"
+
+        # matching pin → normal extraction
+        pins.write_text(f"{good}  1.0\n")
+        r = run_fetch(tmp_path, url, "testpin", "1.0")
+        assert r.returncode == 0, r.stderr
+
+        # wrong hash → refuse before extraction (upstream bits changed?)
+        pins.write_text(f"{'0' * 64}  1.0\n")
+        r = run_fetch(tmp_path, url, "testpin", "1.0")
+        assert r.returncode != 0 and "mismatch" in r.stderr
+
+        # pins file exists but not this version → refuse (forced/manual build
+        # of unreviewed source)
+        pins.write_text(f"{good}  2.0\n")
+        r = run_fetch(tmp_path, url, "testpin", "1.0")
+        assert r.returncode != 0 and "no pin" in r.stderr
+    finally:
+        shutil.rmtree(tool_dir, ignore_errors=True)
+
+
 def test_version_scoped_patches_apply_only_to_their_version(tmp_path):
     # tools/<tool>/patches/<version>/ holds patches for that version ONLY —
     # tass64's memalign rename exists in 1.59.3120 and nowhere else.

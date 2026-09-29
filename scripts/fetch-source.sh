@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fetch-source.sh — download + verify + extract source per tools/<tool>/tool.toml (spec §5, §6.1)
-# Steps: read tool.toml → substitute {version} in source.url → download →
+# Steps: read tool.toml → resolve source URL (watch.py) → download → pin check →
 # extract with strip_components → apply tools/<tool>/patches/* in order (-p1).
 set -euo pipefail
 
@@ -12,45 +12,22 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO_ROOT/tools/$TOOL/tool.toml"
 [ -f "$MANIFEST" ] || { echo "fetch-source: no manifest $MANIFEST" >&2; exit 1; }
 
-# Read manifest facts: mode gates the repackage path.
-read -r MODE MANIFEST_URL STRIP <<EOF
-$(python3 - "$MANIFEST" "$VERSION" <<'PY'
+# Read manifest facts.
+read -r STRIP <<EOF
+$(python3 - "$MANIFEST" <<'PY'
 import tomllib, sys
-manifest, version = sys.argv[1], sys.argv[2]
-t = tomllib.load(open(manifest, "rb"))
-print(
-    t["build"].get("mode", "source"),
-    t["source"]["url"].replace("{version}", version),
-    t["source"].get("strip_components", 1),
-)
+t = tomllib.load(open(sys.argv[1], "rb"))
+print(t["source"].get("strip_components", 1))
 PY
 )
 EOF
 
 # SRC_URL env override exists for tests (tests/test_fetch_source.py).
+# URL resolution (template, or the GitLab release-asset lookup for repackage
+# mode) lives in watch.py so the watcher's pin PRs hash exactly the bytes the
+# build will download — two resolvers could drift, one cannot.
 if [ -z "${SRC_URL:-}" ]; then
-  if [ "$MODE" = "repackage" ]; then
-    # kickc: the distribution zip lives behind a per-version GitLab release
-    # asset link — resolve it at fetch time instead of templating (spec §10).
-    SRC_URL=$(PYTHONPATH="$REPO_ROOT/scripts" python3 - "$MANIFEST" "$VERSION" <<'PY'
-import sys, tomllib, urllib.parse, urllib.request
-from watch import release_asset_url
-manifest, version = sys.argv[1], sys.argv[2]
-t = tomllib.load(open(manifest, "rb"))
-up = t["upstream"]
-if up["type"] != "gitlab":
-    sys.exit(f"fetch-source: repackage mode only supports gitlab upstream (got {up['type']})")
-project = urllib.parse.quote(up["repo"], safe="")
-req = urllib.request.Request(
-    f"https://gitlab.com/api/v4/projects/{project}/releases",
-    headers={"User-Agent": "retropack-fetch"})
-releases = urllib.request.urlopen(req, timeout=30).read().decode()
-print(release_asset_url(releases, version, t["source"].get("release_asset", "Binary")))
-PY
-)
-  else
-    SRC_URL="$MANIFEST_URL"
-  fi
+  SRC_URL=$(python3 "$REPO_ROOT/scripts/watch.py" --source-url "$TOOL" "$VERSION")
 fi
 
 SRC="${SRC:-$WORK/src}"
@@ -65,6 +42,30 @@ ARCHIVE="$WORK/src-archive"
 EFFECTIVE=$(curl -fsSL --proto '=https,file' --proto-redir '=https' \
   -w '%{url_effective}' -o "$ARCHIVE" "$SRC_URL")
 printf '%s\n' "$EFFECTIVE" > "$WORK/.source-url"
+
+# Reviewed-hash gate (spec §8.1): once tools/<tool>/source-sha256.txt exists,
+# $VERSION must have a pin matching the downloaded bytes — the watcher only
+# dispatches pinned versions, so a miss here means a forced/manual build of
+# unreviewed source. Until the file exists the tool is ungated (the first
+# pins-PR merge flips it, permanently).
+PINS="$REPO_ROOT/tools/$TOOL/source-sha256.txt"
+if [ -f "$PINS" ]; then
+  PIN=$(awk -v v="$VERSION" '$1 !~ /^#/ && $2 == v {print $1; exit}' "$PINS")
+  if [ -z "$PIN" ]; then
+    echo "fetch-source: no pin for $TOOL $VERSION in tools/$TOOL/source-sha256.txt" >&2
+    echo "  → python3 scripts/watch.py --source-sha256 $TOOL $VERSION, review, PR the pin" >&2
+    exit 1
+  fi
+  if ! python3 - "$ARCHIVE" "$PIN" <<'PY'
+import hashlib, sys
+h = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+sys.exit(0 if h == sys.argv[2] else 1)
+PY
+  then
+    echo "fetch-source: sha256 mismatch for $TOOL $VERSION — upstream bits changed after review?" >&2
+    exit 1
+  fi
+fi
 
 # Detect format by magic bytes, not URL suffix: SourceForge download URLs end
 # in `/download`, not `.zip` (spec §10 tass64).

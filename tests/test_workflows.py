@@ -174,6 +174,10 @@ def test_permissions_are_least_privilege_per_job():
     watch = _load("watch.yml")
     assert watch.get("permissions") == {"contents": "read"}
     assert watch["jobs"]["keep-alive"].get("permissions") == {"actions": "write"}
+    # dispatch + propose act through the per-repo App token; the GITHUB_TOKEN
+    # must NOT gain write scopes for them
+    assert "permissions" not in watch["jobs"]["dispatch"]
+    assert "permissions" not in watch["jobs"]["propose"]
 
     ci = _load("ci.yml")
     assert ci.get("permissions") == {"contents": "read"}
@@ -212,6 +216,25 @@ def test_prepare_validates_inputs():
     run = val[0]["run"]
     assert "'^[a-z0-9-]+$'" in run
     assert "'^[0-9]+(\\.[0-9]+)*$'" in run
+
+def test_watch_yml_pins_review_gate():
+    # §8.1 review gate: only pinned versions dispatch; unpinned ones are
+    # hashed by the watcher and proposed as one pins PR per tool — the merge
+    # authorizes the build, never the schedule.
+    watch = _load("watch.yml")
+    declared = set(watch["jobs"]["detect"].get("outputs", {}))
+    assert {"pending", "tools", "unpinned"} <= declared
+    prop = watch["jobs"]["propose"]
+    assert "unpinned != '{}'" in str(prop["if"])
+    assert "dry_run" in str(prop["if"])          # dry-run = zero side effects
+    text = (WF / "watch.yml").read_text()
+    for frag in ("--write-pins", "--body-dir", "permission-pull-requests: write",
+                 "watch/pins-", "gh pr create", "gh pr edit"):
+        assert frag in text, f"watch.yml propose job missing: {frag}"
+    # detect's dispatch outputs must come from the dispatch bucket — a slip
+    # here would route unreviewed versions straight to builds
+    run = _runs(watch["jobs"]["detect"])
+    assert "['dispatch']" in run and "['propose']" in run
 
 def test_no_jq_program_interpolation():
     # Values must enter jq/awk as data (-v/--arg), never inside the program

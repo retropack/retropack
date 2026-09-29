@@ -18,6 +18,8 @@ max_per_run = 2
 [source]
 url = "https://github.com/TODO/TODO/archive/refs/tags/{version}.tar.gz"
 strip_components = 1
+# Source-hash pins (§8.1 review gate) live in tools/<name>/source-sha256.txt —
+# created by watcher PRs, not by hand; fetch-source.sh enforces them once present.
 
 [build]
 mode = "source"                       # source | repackage
